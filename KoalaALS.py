@@ -875,7 +875,7 @@ def make_adg_xml(adg_pads, group_index, group_letter):
     """Build the full ADG XML string for one group."""
     ids = IdCounter()
 
-    GROUP_BASE_NOTES = [80, 80, 80, 80]   # All groups share the same rack positions (C1–D#2)
+    GROUP_BASE_NOTES = [80, 80, 80, 80]
     base_note = GROUP_BASE_NOTES[group_index]
 
     branch_presets_xml = ""
@@ -1217,6 +1217,24 @@ def pad_label(pad_num: int) -> str:
     return f"{'ABCD'[bank]}{local + 1:02d}"
 
 
+def pad_num_from_label(label: str) -> int:
+    """Inverse of pad_label: 'C05' -> 36, 'A01' -> 0, etc."""
+    bank  = 'ABCD'.index(label[0])
+    local = int(label[1:]) - 1
+    return bank * 16 + local
+
+
+def koala_pad_to_drum_note(pad_num: int) -> int:
+    """Return the drum rack ReceivingNote for a Koala pad number.
+    Must match the formula in _make_drum_rack_device_chain exactly.
+    """
+    _BASE = [80, 80, 80, 80]
+    bank        = pad_num // 16
+    pad_in_bank = pad_num % 16
+    row         = pad_in_bank // 4
+    col         = pad_in_bank % 4
+    return _BASE[min(bank, 3)] - col + row * 4
+
 
 # ==============================================================================
 # -- MIDI CLIP SECTION --------------------------------------------------------
@@ -1428,24 +1446,27 @@ def _inject_clips(track_xml, clips_by_slot):
 
 
 def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nums,
-                          group_index_map):
+                          group_index_map, chopper_pad_info=None):
     """
     Parse sequences from seq_data and return clip data for each track.
 
-    Returns:
-        drum_clips:   dict  group_name -> {slot_idx: (clip_name, num_bars, note_events)}
-        simpler_clips: dict pad_num    -> {slot_idx: (clip_name, num_bars, note_events)}
+    chopper_pad_info: dict pad_num -> chopper_params dict (from _get_chopper_params).
+      Chopper pads are always routed to simpler_clips, never drum_clips.
+      Note mode  (trigger=0): midi_note = 35 + int(round(pitch))
+      Velocity   (trigger=1): midi_note = 35 + floor((127-vel)*N/128), fixed vel out
+      Random     (trigger=2): midi_note = 35 (MidiRandom handles slice selection)
 
-    Uses the same logic as koalaexportADV.py process_sequence, unchanged.
+    Returns:
+        drum_clips:    dict group_name -> {slot_idx: (clip_name, num_bars, note_events)}
+        simpler_clips: dict pad_num    -> {slot_idx: (clip_name, num_bars, note_events)}
     """
+    if chopper_pad_info is None:
+        chopper_pad_info = {}
     drum_clips    = {gname: {} for gname in group_index_map}
     simpler_clips = {}
 
     sequences = seq_data.get("sequences", [])
     for seq_idx, seq in enumerate(sequences):
-        # Support two Koala sequence.json formats:
-        #   New: seq = {'noteSequence': {'pattern': {'notes': [...], 'numBars': N}}}
-        #   Old: seq = {'pattern': {'notes': [...], 'numBars': N}}
         pattern  = (seq.get("noteSequence", {}) or {}).get("pattern", {}) or                     seq.get("pattern", {}) or {}
         notes    = pattern.get("notes") or []
         num_bars = pattern.get("numBars", 1)
@@ -1454,13 +1475,17 @@ def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nu
 
         seq_num = seq_idx + 1
 
-        # Detect note-mode pads (same logic as koalaexportADV.py)
-        note_mode_pads = set(n["num"] for n in notes if n.get("pitch", 0.0) != 0.0)
+        # Partition notes: chopper pads handled separately
+        chopper_pads_here = {n["num"] for n in notes if n["num"] in chopper_pad_info}
+        note_mode_pads = {n["num"] for n in notes
+                          if n.get("pitch", 0.0) != 0.0 and n["num"] not in chopper_pads_here}
         if keyboard_mode and selected_pad >= 0:
             note_mode_pads.add(selected_pad)
 
-        normal_notes   = [n for n in notes if n["num"] not in note_mode_pads]
+        normal_notes   = [n for n in notes if n["num"] not in note_mode_pads
+                          and n["num"] not in chopper_pads_here]
         keyboard_notes = [n for n in notes if n["num"] in note_mode_pads]
+        chopper_notes  = [n for n in notes if n["num"] in chopper_pads_here]
 
         # ── Drum group clips ──────────────────────────────────────────────────
         group_events = {gname: [] for gname in group_index_map}
@@ -1474,15 +1499,15 @@ def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nu
             start  = int(note["timeOffset"])
             length = int(note["length"])
             if length <= 0:
-                continue   # skip malformed/negative-length notes
-            end   = start + length
+                continue
+            end = start + length
             group_events[gname].append((midi_note, vel, start, end))
 
         for gname, gevents in group_events.items():
             if gevents:
-                letter     = GROUP_LETTER[gname]
-                clip_name  = f"Seq {seq_num}{letter}"
-                slot_idx   = seq_idx          # sequence 1 -> slot 0, etc.
+                letter    = GROUP_LETTER[gname]
+                clip_name = f"Seq {seq_num}{letter}"
+                slot_idx  = seq_idx
                 drum_clips[gname][slot_idx] = (clip_name, num_bars, gevents)
 
         # ── Simpler (note-mode) clips ─────────────────────────────────────────
@@ -1490,16 +1515,66 @@ def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nu
         for note in keyboard_notes:
             pad_num   = note["num"]
             pitch     = note.get("pitch", 0.0)
-            midi_note = 60 + int(round(pitch))   # unchanged from koalaexportADV.py
+            midi_note = 60 + int(round(pitch))
             vel    = note.get("vel", 100)
             start  = int(note["timeOffset"])
             length = int(note["length"])
             if length <= 0:
-                continue   # skip malformed/negative-length notes
-            end   = start + length
+                continue
+            end = start + length
             pad_events.setdefault(pad_num, []).append((midi_note, vel, start, end))
 
         for pad_num, events in pad_events.items():
+            label_str = pad_label(pad_num)
+            clip_name = f"Seq {seq_num} {label_str}"
+            slot_idx  = seq_idx
+            simpler_clips.setdefault(pad_num, {})[slot_idx] = (clip_name, num_bars, events)
+
+        # ── Chopper clips ─────────────────────────────────────────────────────
+        chopper_events = {}
+        for note in chopper_notes:
+            pad_num = note["num"]
+            cp      = chopper_pad_info[pad_num]
+            N       = cp['slice_count']
+            trigger = cp['trigger_mode']
+            vel     = note.get("vel", 100)
+            start   = int(note["timeOffset"])
+            length  = int(note["length"])
+            if length <= 0:
+                continue
+            end   = start + length
+            pitch = note.get("pitch", 0.0)
+
+            if trigger == 0.0:   # Note Mode: pitch selects slice
+                slice_idx = int(round(pitch))
+                slice_idx = max(0, min(N - 1, slice_idx))
+                midi_note = 36 + slice_idx   # C1=slice1, C#1=slice2, ...
+                out_vel   = vel
+            elif trigger == 1.0: # Velocity Mode: high vel = early slice
+                slice_idx = int((127 - vel) * N / 128)
+                slice_idx = max(0, min(N - 1, slice_idx))
+                midi_note = 36 + slice_idx   # C1=slice1 at max velocity
+                out_vel   = 100  # fixed velocity in output
+            else:                # Random Mode: route to drum_clips
+                midi_note = -1   # handled separately below
+                out_vel   = vel
+
+            if midi_note == -1:
+                # Random mode: fire the drum rack pad directly so MidiRandom
+                # inside the branch selects the slice. Append into the existing
+                # drum_clips entry for this group (or create one).
+                gname, shift = group_for_pad(pad_num)
+                if gname is not None and gname in group_index_map:
+                    drum_midi_note = koala_note_to_midi(pad_num) + shift  # same formula as normal pads
+                    letter = GROUP_LETTER[gname]
+                    if seq_idx not in drum_clips[gname]:
+                        drum_clips[gname][seq_idx] = (f"Seq {seq_num}{letter}", num_bars, [])
+                    drum_clips[gname][seq_idx][2].append(
+                        (drum_midi_note, out_vel, start, end))
+            else:
+                chopper_events.setdefault(pad_num, []).append((midi_note, out_vel, start, end))
+
+        for pad_num, events in chopper_events.items():
             label_str = pad_label(pad_num)
             clip_name = f"Seq {seq_num} {label_str}"
             slot_idx  = seq_idx
@@ -1980,18 +2055,22 @@ def _als_save(path, xml):
         f.write(xml.encode("utf-8"))
 
 def _als_remap_ids(xml, id_start):
-    """Remap ALL Ids in xml to fresh sequential values starting at id_start."""
-    seen = {}
+    """Remap every Id= attribute occurrence to a unique sequential value.
+    Each occurrence gets its own unique ID, even if the original value was shared
+    across multiple elements (e.g. templates use Id="0" everywhere).
+    Skips LomId= attributes via negative lookbehind.
+    """
+    pat = r'(?<![a-zA-Z])Id="(\d+)"'
     counter = id_start
-    for m in re.finditer(r'Id="(\d+)"', xml):
-        v = m.group(1)
-        if v not in seen:
-            seen[v] = counter
-            counter += 1
-    def replacer(m):
-        v = m.group(1)
-        return f'Id="{seen[v]}"' if v in seen else m.group(0)
-    return re.sub(r'Id="(\d+)"', replacer, xml), counter
+    replacements = []
+    for m in re.finditer(pat, xml):
+        replacements.append((m.start(), m.end(), counter))
+        counter += 1
+    # Build result by replacing from end to start to preserve positions
+    result = list(xml)
+    for start, end, new_id in reversed(replacements):
+        result[start:end] = list(f'Id="{new_id}"')
+    return ''.join(result), counter
 
 def _als_remap_track(track_xml, track_id, new_name, new_colour, id_start, rewire_index):
     high_ids_vals = [m.group(1) for m in re.finditer(r'Id="(\d+)"', track_xml)
@@ -2012,6 +2091,9 @@ def _als_remap_track(track_xml, track_id, new_name, new_colour, id_start, rewire
     display_num = rewire_index + 1
     result = re.sub(r'(<EffectiveName Value=")[^"]*(")',
                     lambda m: f'{m.group(1)}{display_num}-{new_name}{m.group(2)}', result, count=1)
+    result = re.sub(r'(<EffectiveName Value="[^"]*" />\s*<UserName Value=")[^"]*(")',
+                    lambda m: f'{m.group(1)}{new_name}{m.group(2)}',
+                    result, count=1)
     result = re.sub(r'(<Color Value=")(\d+)(")',
                     lambda m: f'{m.group(1)}{new_colour}{m.group(3)}', result, count=1)
     result = re.sub(r'(<ReWireDeviceMidiTargetId Value=")(\d+)(")',
@@ -2127,7 +2209,7 @@ def _als_expand_clipslots(track_xml, n_scenes):
 
 def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start,
                       wav_abs_path=None, bus_mode=False, midi_track_id=None,
-                      rt_ids=None, koala_bus=-1):
+                      rt_ids=None, koala_bus=-1, chopper_params=None):
     """Build one DrumBranch XML block for a single pad.
 
     wav_abs_path:   absolute path to the extracted WAV on disk (used for trim).
@@ -2135,6 +2217,9 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
     midi_track_id:  ALS MidiTrack ID (needed for routing target string).
     rt_ids:         list of 4 ReturnTrack IDs [A,B,C,D].
     koala_bus:      Koala bus value for this pad (-1=master, 0-3=bus).
+    chopper_params: dict from _get_chopper_params() — switches Simpler to
+                    Slice mode, sets SendingNote=35, injects MidiRandom for
+                    Random trigger mode.
     """
     tpl = _tpl(_DRUM_BRANCH_TPL_B64)
 
@@ -2318,6 +2403,18 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
         lambda m: f'{m.group(1)}{als_filter_on}{m.group(2)}',
         tpl, count=1, flags=re.DOTALL)
 
+    # Mute: Koala muted=True -> ALS Speaker Manual=false
+    # Chopper pads store muted in padParams; normal pads store it top-level.
+    if chopper_params is not None:
+        pad_muted = bool(pad_data.get('synthParams', {}).get('padParams', {}).get('muted', False))
+    else:
+        pad_muted = bool(pad_data.get('muted', False))
+    if pad_muted:
+        tpl = re.sub(
+            r'(<Speaker>.*?<Manual Value=")[^"]*(")',
+            lambda m: f'{m.group(1)}false{m.group(2)}',
+            tpl, count=1, flags=re.DOTALL)
+
     # Remap all IDs to fresh unique values
 
     # Clear WarpMarkers to a clean single-origin marker.
@@ -2495,6 +2592,63 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
             lambda m: m.group(1) + f'<Value>\n{sf}{t15}</Value>',
             remapped, count=1, flags=re.DOTALL)
 
+    # ── Chopper mode: Slice Simpler + SendingNote=35 + optional MidiRandom ─
+    if chopper_params:
+        N = chopper_params['slice_count']
+        is_auto = chopper_params.get('slice_mode', 1.0) == 0.0
+        # Switch Simpler to Slice mode (Globals PlaybackMode=2)
+        remapped = re.sub(r'<PlaybackMode Value="[^"]*"',
+                          '<PlaybackMode Value="2"', remapped, count=1)
+        # SlicingStyle: 3=Manual (Auto chop), 2=Region/Equal
+        slicing_style = "3" if is_auto else "2"
+        remapped = re.sub(r'<SlicingStyle Value="[^"]*"',
+                          f'<SlicingStyle Value="{slicing_style}"', remapped, count=1)
+        remapped = re.sub(r'<SlicingRegions Value="[^"]*"',
+                          f'<SlicingRegions Value="{N}"', remapped, count=1)
+        # NumVoices: 1=mono, 5=poly
+        num_voices = "1" if chopper_params['mono'] else "5"
+        remapped = re.sub(r'<NumVoices Value="[^"]*"',
+                          f'<NumVoices Value="{num_voices}"', remapped, count=1)
+        # SimplerSlicing PlaybackMode: 0=Gate, 2=Thru
+        # ONE SHOT does not change slice playback mode (it's handled by NumVoices=1)
+        if chopper_params['play_thru']:
+            slicing_pm = "2"
+        else:
+            slicing_pm = "0"
+        remapped = re.sub(r'(<SimplerSlicing>\s*)<PlaybackMode Value="[^"]*"',
+                          lambda m: m.group(1) + f'<PlaybackMode Value="{slicing_pm}"',
+                          remapped, count=1, flags=re.DOTALL)
+        # SendingNote: Random=35 (B0), all other chopper=36 (C1)
+        sending_note = '35' if chopper_params['trigger_mode'] == 2.0 else '36'
+        remapped = remapped.replace('<SendingNote Value="60" />',
+                                    f'<SendingNote Value="{sending_note}" />', 1)
+        # Auto chop: inject ManualSlicePoints (tab=16 for drum branch Simpler)
+        if is_auto and chopper_params.get('slice_starts'):
+            msp_xml = _manual_slice_points_xml(chopper_params['slice_starts'], tab_level=16)
+            remapped = remapped.replace('<ManualSlicePoints />\n', msp_xml, 1)
+            if '<ManualSlicePoints />\n' not in remapped:
+                remapped = re.sub(r'<ManualSlicePoints>\s*</ManualSlicePoints>',
+                                  msp_xml.rstrip(), remapped, count=1)
+        # Random trigger: inject MidiRandom inside drum branch Devices (tab=13)
+        if chopper_params['trigger_mode'] == 2.0:
+            mr_xml, id_start = _midi_random_device_xml(N, id_start, tab_level=13)
+            remapped = remapped.replace('<Devices>\n', '<Devices>\n' + mr_xml, 1)
+        # EQ: inject EQ8 after Simpler if pad EQ enabled (tab=13 for drum branch)
+        eq_data_c = chopper_params.get('eq', {})
+        if eq_data_c and str(eq_data_c.get('enabled', 'false')).lower() == 'true':
+            eq8_xml, id_start = _eq8_device_xml(eq_data_c, id_start, tab_level=13)
+            remapped = re.sub(r'(</OriginalSimpler>)(\s*</Devices>)',
+                              lambda m: m.group(1) + '\n' + eq8_xml + m.group(2),
+                              remapped, count=1)
+    else:
+        # Normal (non-chopper) pad: check for pad-level EQ
+        eq_data_n = pad_data.get('eq', {})
+        if eq_data_n and str(eq_data_n.get('enabled', 'false')).lower() == 'true':
+            eq8_xml, id_start = _eq8_device_xml(eq_data_n, id_start, tab_level=13)
+            remapped = re.sub(r'(</OriginalSimpler>)(\s*</Devices>)',
+                              lambda m: m.group(1) + '\n' + eq8_xml + m.group(2),
+                              remapped, count=1)
+
     # Bus mode: inject AudioBranchSendInfo into each pad's AudioBranchMixerDevice,
     # update the RoutingHelper target, and add TrackSendHolder entries.
     if bus_mode and rt_ids and midi_track_id is not None:
@@ -2551,7 +2705,10 @@ def _make_drum_rack_device_chain(adg_pads, group_index, id_start,
 
     # Build branches XML
     branches_xml = ""
-    for pad_num, pad_data, wav_name, rel_path, _, wav_abs in adg_pads:
+    for pad_tuple in adg_pads:
+        pad_num, pad_data, wav_name, rel_path = pad_tuple[0], pad_tuple[1], pad_tuple[2], pad_tuple[3]
+        wav_abs    = pad_tuple[5]
+        chopper_p  = pad_tuple[6] if len(pad_tuple) > 6 else None
         pad_in_bank    = pad_num % 16
         row            = pad_in_bank // 4
         col            = pad_in_bank % 4
@@ -2562,7 +2719,7 @@ def _make_drum_rack_device_chain(adg_pads, group_index, id_start,
         branch_xml, id_start = _make_drum_branch(
             rel_path, pad_data, display_name, receiving_note, id_start, wav_abs,
             bus_mode=bus_mode, midi_track_id=midi_track_id,
-            rt_ids=rt_ids, koala_bus=koala_bus)
+            rt_ids=rt_ids, koala_bus=koala_bus, chopper_params=chopper_p)
         branches_xml += branch_xml + "\n"
 
     # Get the drum rack DeviceChain template and inject branches.
@@ -2586,14 +2743,16 @@ def _make_drum_rack_device_chain(adg_pads, group_index, id_start,
         f'<UserName Value="{group_name_str}" />',
         1
     )
-    rack_tpl = rack_tpl.replace(
+    # Remap the rack's own IDs BEFORE injecting branches so branch IDs
+    # (already uniquely assigned per pad) are not remapped a second time.
+    remapped, id_start = _als_remap_ids(rack_tpl, id_start)
+
+    # Now inject the pre-remapped branches into the remapped rack
+    remapped = remapped.replace(
         '<Branches>\n\t\t\t\t\t\t\t\t</Branches>',
         '<Branches>\n' + branches_xml + '\t\t\t\t\t\t\t\t</Branches>',
         1
     )
-
-    # Remap the rack's own IDs (MacroControls etc)
-    remapped, id_start = _als_remap_ids(rack_tpl, id_start)
 
     # Bus mode: resolve placeholders, inject ReturnBranches
     if bus_mode and rt_ids and midi_track_id is not None:
@@ -2614,13 +2773,491 @@ def _make_drum_rack_device_chain(adg_pads, group_index, id_start,
 
     return remapped, id_start
 
-def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, id_start,
-                               wav_abs_path=None):
+
+# Koala EQ type → Ableton EQ Eight Mode
+_KOALA_EQ_TYPE_TO_EQ8_MODE = {
+    'lowshelf':  '1',
+    'peaking':   '2',
+    'highshelf': '4',
+}
+
+def _eq8_device_xml(eq_data, id_start, tab_level=13):
+    """Build an Ableton EQ Eight device XML block from Koala EQ parameters.
+
+    eq_data: dict with keys 'lo', 'mid', 'hi' — each containing
+             freq (Hz), gain (dB), q, type (lowshelf/peaking/highshelf)
+    Maps onto EQ8 bands 0/1/2 (lo/mid/hi). Bands 3-7 are inactive defaults.
+    Tab level 13 for drum branch, 7 for standalone Simpler track.
     """
-    Build a complete inner DeviceChain for a note-mode Simpler track.
-    Applies the same Koala pad parameters as _make_drum_branch for full parity:
-      vol, pan, pitch, tune, speed, attack, release, tone, start, end,
-      looping, oneshot, stretching, fadeIn, fadeOut, trim.
+    def _uid():
+        nonlocal id_start
+        v = id_start; id_start += 1; return v
+
+    T  = '\t' * tab_level        # device level
+    T1 = '\t' * (tab_level + 1)  # param level
+    T2 = '\t' * (tab_level + 2)
+    T3 = '\t' * (tab_level + 3)
+    T4 = '\t' * (tab_level + 4)
+
+    dev_id  = _uid()
+    on_at   = _uid()
+    pt_id   = _uid()
+    psr_id  = _uid()
+
+    def _band_xml(band_idx, is_on, mode, freq, gain, q_val, id_start_ref):
+        """Generate one Bands.N block."""
+        nonlocal id_start
+        on_at_a   = _uid(); mode_at_a = _uid(); freq_at_a = _uid()
+        freq_mt_a = _uid(); gain_at_a = _uid(); gain_mt_a = _uid()
+        q_at_a    = _uid(); q_mt_a    = _uid()
+        on_at_b   = _uid(); freq_at_b = _uid(); freq_mt_b = _uid()
+        gain_at_b = _uid(); gain_mt_b = _uid(); q_at_b = _uid(); q_mt_b = _uid()
+
+        is_on_str = "true" if is_on else "false"
+        gain_str  = f"{gain:.10g}"
+        freq_str  = f"{freq:.10g}"
+        q_str     = f"{q_val:.10g}"
+
+        return (
+            f"{T1}<Bands.{band_idx}>\n"
+            f"{T2}<ParameterA>\n"
+            f"{T3}<IsOn>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"{is_on_str}\" />\n"
+            f"{T4}<AutomationTarget Id=\"{on_at_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
+            f"{T3}</IsOn>\n"
+            f"{T3}<Mode>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"{mode}\" />\n"
+            f"{T4}<AutomationTarget Id=\"{mode_at_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"7\" /></MidiControllerRange>\n"
+            f"{T3}</Mode>\n"
+            f"{T3}<Freq>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"{freq_str}\" />\n"
+            f"{T4}<MidiControllerRange><Min Value=\"10\" /><Max Value=\"22000\" /></MidiControllerRange>\n"
+            f"{T4}<AutomationTarget Id=\"{freq_at_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<ModulationTarget Id=\"{freq_mt_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</ModulationTarget>\n"
+            f"{T3}</Freq>\n"
+            f"{T3}<Gain>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"{gain_str}\" />\n"
+            f"{T4}<MidiControllerRange><Min Value=\"-15\" /><Max Value=\"15\" /></MidiControllerRange>\n"
+            f"{T4}<AutomationTarget Id=\"{gain_at_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<ModulationTarget Id=\"{gain_mt_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</ModulationTarget>\n"
+            f"{T3}</Gain>\n"
+            f"{T3}<Q>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"{q_str}\" />\n"
+            f"{T4}<MidiControllerRange><Min Value=\"0.1000000015\" /><Max Value=\"18\" /></MidiControllerRange>\n"
+            f"{T4}<AutomationTarget Id=\"{q_at_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<ModulationTarget Id=\"{q_mt_a}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</ModulationTarget>\n"
+            f"{T3}</Q>\n"
+            f"{T2}</ParameterA>\n"
+            f"{T2}<ParameterB>\n"
+            f"{T3}<IsOn>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"false\" />\n"
+            f"{T4}<AutomationTarget Id=\"{on_at_b}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
+            f"{T3}</IsOn>\n"
+            f"{T3}<Mode>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"1\" />\n"
+            f"{T4}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"7\" /></MidiControllerRange>\n"
+            f"{T3}</Mode>\n"
+            f"{T3}<Freq>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"40\" />\n"
+            f"{T4}<MidiControllerRange><Min Value=\"10\" /><Max Value=\"22000\" /></MidiControllerRange>\n"
+            f"{T4}<AutomationTarget Id=\"{freq_at_b}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<ModulationTarget Id=\"{freq_mt_b}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</ModulationTarget>\n"
+            f"{T3}</Freq>\n"
+            f"{T3}<Gain>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"0\" />\n"
+            f"{T4}<MidiControllerRange><Min Value=\"-15\" /><Max Value=\"15\" /></MidiControllerRange>\n"
+            f"{T4}<AutomationTarget Id=\"{gain_at_b}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<ModulationTarget Id=\"{gain_mt_b}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</ModulationTarget>\n"
+            f"{T3}</Gain>\n"
+            f"{T3}<Q>\n"
+            f"{T4}<LomId Value=\"0\" />\n"
+            f"{T4}<Manual Value=\"0.7071067095\" />\n"
+            f"{T4}<MidiControllerRange><Min Value=\"0.1000000015\" /><Max Value=\"18\" /></MidiControllerRange>\n"
+            f"{T4}<AutomationTarget Id=\"{q_at_b}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</AutomationTarget>\n"
+            f"{T4}<ModulationTarget Id=\"{q_mt_b}\">\n{T4}\t<LockEnvelope Value=\"0\" />\n{T4}</ModulationTarget>\n"
+            f"{T3}</Q>\n"
+            f"{T2}</ParameterB>\n"
+            f"{T1}</Bands.{band_idx}>\n"
+        )
+
+    # Map the 3 Koala bands to EQ8 positions matching Ableton layout.
+    # lo  → Band 0, Mode=2 (Bell at low freq)
+    # mid → Band 2, Mode=3 (Bell/Peak)
+    # hi  → Band 3, Mode=5 (High Cut)
+    # This matches the reference mod file structure.
+    lo_bd  = eq_data.get('lo',  {})
+    mid_bd = eq_data.get('mid', {})
+    hi_bd  = eq_data.get('hi',  {})
+
+    Q = 0.7071067095  # Ableton EQ8 default Q
+
+    # 8 bands: (band_idx, is_on, mode, freq, gain)
+    band_specs = [
+        (0, True,  '2', float(lo_bd.get('freq',  100.0)), float(lo_bd.get('gain',  0.0))),  # lo
+        (1, False, '3', 200.0,                             0.0),                              # inactive
+        (2, True,  '3', float(mid_bd.get('freq', 1000.0)), float(mid_bd.get('gain', 0.0))), # mid
+        (3, True,  '5', float(hi_bd.get('freq',  8000.0)), float(hi_bd.get('gain',  0.0))), # hi
+        (4, False, '3', 100.0,   0.0),
+        (5, False, '3', 10000.0, 0.0),
+        (6, False, '3', 5000.0,  0.0),
+        (7, False, '6', 18000.0, 0.0),
+    ]
+
+    bands_xml = ""
+    for band_idx, is_on, mode, freq, gain in band_specs:
+        bands_xml += _band_xml(band_idx, is_on, mode, freq, gain, Q, id_start)
+
+    # Global gain AutomationTarget
+    gg_at = _uid(); gg_mt = _uid()
+    sc_at = _uid()
+
+    xml = (
+        f"{T}<Eq8 Id=\"{dev_id}\">\n"
+        f"{T1}<LomId Value=\"0\" />\n"
+        f"{T1}<LomIdView Value=\"0\" />\n"
+        f"{T1}<IsExpanded Value=\"false\" />\n"
+        f"{T1}<BreakoutIsExpanded Value=\"false\" />\n"
+        f"{T1}<On>\n"
+        f"{T2}<LomId Value=\"0\" />\n"
+        f"{T2}<Manual Value=\"true\" />\n"
+        f"{T2}<AutomationTarget Id=\"{on_at}\">\n{T2}\t<LockEnvelope Value=\"0\" />\n{T2}</AutomationTarget>\n"
+        f"{T2}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
+        f"{T1}</On>\n"
+        f"{T1}<ModulationSourceCount Value=\"0\" />\n"
+        f"{T1}<ParametersListWrapper LomId=\"0\" />\n"
+        f"{T1}<Pointee Id=\"{pt_id}\" />\n"
+        f"{T1}<LastSelectedTimeableIndex Value=\"0\" />\n"
+        f"{T1}<LastSelectedClipEnvelopeIndex Value=\"0\" />\n"
+        f"{T1}<LastPresetRef>\n"
+        f"{T2}<Value>\n"
+        f"{T3}<AbletonDefaultPresetRef Id=\"{psr_id}\">\n"
+        f"{T4}<FileRef>\n"
+        f"{T4}\t<RelativePathType Value=\"0\" />\n"
+        f"{T4}\t<RelativePath Value=\"\" />\n"
+        f"{T4}\t<Path Value=\"\" />\n"
+        f"{T4}\t<Type Value=\"2\" />\n"
+        f"{T4}\t<LivePackName Value=\"\" />\n"
+        f"{T4}\t<LivePackId Value=\"\" />\n"
+        f"{T4}\t<OriginalFileSize Value=\"0\" />\n"
+        f"{T4}\t<OriginalCrc Value=\"0\" />\n"
+        f"{T4}\t<SourceHint Value=\"\" />\n"
+        f"{T4}</FileRef>\n"
+        f"{T4}<DeviceId Name=\"Eq8\" />\n"
+        f"{T3}</AbletonDefaultPresetRef>\n"
+        f"{T2}</Value>\n"
+        f"{T1}</LastPresetRef>\n"
+        f"{T1}<LockedScripts />\n"
+        f"{T1}<IsFolded Value=\"false\" />\n"
+        f"{T1}<ShouldShowPresetName Value=\"true\" />\n"
+        f"{T1}<UserName Value=\"\" />\n"
+        f"{T1}<Annotation Value=\"\" />\n"
+        f"{T1}<SourceContext><Value /></SourceContext>\n"
+        f"{T1}<MpePitchBendUsesTuning Value=\"true\" />\n"
+        f"{T1}<ViewData Value=\"{{}}\" />\n"
+        f"{T1}<OverwriteProtectionNumber Value=\"3075\" />\n"
+        f"{T1}<Precision Value=\"0\" />\n"
+        f"{T1}<Mode Value=\"0\" />\n"
+        f"{T1}<EditMode Value=\"false\" />\n"
+        f"{T1}<SelectedBand Value=\"0\" />\n"
+        f"{T1}<GlobalGain>\n"
+        f"{T2}<LomId Value=\"0\" />\n"
+        f"{T2}<Manual Value=\"0\" />\n"
+        f"{T2}<MidiControllerRange><Min Value=\"-15\" /><Max Value=\"15\" /></MidiControllerRange>\n"
+        f"{T2}<AutomationTarget Id=\"{gg_at}\">\n{T2}\t<LockEnvelope Value=\"0\" />\n{T2}</AutomationTarget>\n"
+        f"{T2}<ModulationTarget Id=\"{gg_mt}\">\n{T2}\t<LockEnvelope Value=\"0\" />\n{T2}</ModulationTarget>\n"
+        f"{T1}</GlobalGain>\n"
+        f"{bands_xml}"
+        f"{T1}<Scale>\n"
+        f"{T2}<LomId Value=\"0\" />\n"
+        f"{T2}<Manual Value=\"1\" />\n"
+        f"{T2}<MidiControllerRange><Min Value=\"-2\" /><Max Value=\"2\" /></MidiControllerRange>\n"
+        f"{T2}<AutomationTarget Id=\"{sc_at}\">\n{T2}\t<LockEnvelope Value=\"0\" />\n{T2}</AutomationTarget>\n"
+        f"{T2}<ModulationTarget Id=\"{_uid()}\">\n{T2}\t<LockEnvelope Value=\"0\" />\n{T2}</ModulationTarget>\n"
+        f"{T1}</Scale>\n"
+        f"{T1}<SpectrumAnalyzer>\n"
+        f"{T2}<LomId Value=\"0\" />\n"
+        f"{T2}<LomIdView Value=\"0\" />\n"
+        f"{T2}<IsExpanded Value=\"false\" />\n"
+        f"{T2}<BreakoutIsExpanded Value=\"false\" />\n"
+        f"{T2}<On>\n"
+        f"{T3}<LomId Value=\"0\" />\n"
+        f"{T3}<Manual Value=\"true\" />\n"
+        f"{T3}<AutomationTarget Id=\"{_uid()}\">\n{T3}\t<LockEnvelope Value=\"0\" />\n{T3}</AutomationTarget>\n"
+        f"{T3}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
+        f"{T2}</On>\n"
+        f"{T2}<ModulationSourceCount Value=\"0\" />\n"
+        f"{T2}<ParametersListWrapper LomId=\"0\" />\n"
+        f"{T2}<Pointee Id=\"{_uid()}\" />\n"
+        f"{T2}<LastSelectedTimeableIndex Value=\"0\" />\n"
+        f"{T2}<LastSelectedClipEnvelopeIndex Value=\"0\" />\n"
+        f"{T2}<LastPresetRef><Value /></LastPresetRef>\n"
+        f"{T2}<LockedScripts />\n"
+        f"{T2}<IsFolded Value=\"false\" />\n"
+        f"{T2}<ShouldShowPresetName Value=\"true\" />\n"
+        f"{T2}<UserName Value=\"\" />\n"
+        f"{T2}<Annotation Value=\"\" />\n"
+        f"{T2}<SourceContext><Value /></SourceContext>\n"
+        f"{T2}<MpePitchBendUsesTuning Value=\"true\" />\n"
+        f"{T2}<ViewData Value=\"{{}}\" />\n"
+        f"{T2}<OverwriteProtectionNumber Value=\"3075\" />\n"
+        f"{T2}<ScaleYBegin Value=\"0\" />\n"
+        f"{T2}<ScaleYRange Value=\"80\" />\n"
+        f"{T2}<AutoScaleY Value=\"false\" />\n"
+        f"{T2}<ScaleXMode Value=\"1\" />\n"
+        f"{T2}<ShowBins Value=\"false\" />\n"
+        f"{T2}<ShowMax Value=\"true\" />\n"
+        f"{T2}<AnalyzeOn Value=\"true\" />\n"
+        f"{T2}<Length Value=\"2\" />\n"
+        f"{T2}<Window Value=\"3\" />\n"
+        f"{T2}<ChannelMode Value=\"2\" />\n"
+        f"{T2}<NumAverages Value=\"1\" />\n"
+        f"{T2}<MinRefreshTime Value=\"60\" />\n"
+        f"{T1}</SpectrumAnalyzer>\n"
+        f"{T1}<Live8ShelfScaleLegacyMode Value=\"false\" />\n"
+        f"{T1}<AuditionOnOff Value=\"false\" />\n"
+        f"{T1}<AdaptiveQFactor Value=\"1.12\" />\n"
+        f"{T1}<AdaptiveQ>\n"
+        f"{T2}<LomId Value=\"0\" />\n"
+        f"{T2}<Manual Value=\"true\" />\n"
+        f"{T2}<AutomationTarget Id=\"{_uid()}\">\n{T2}\t<LockEnvelope Value=\"0\" />\n{T2}</AutomationTarget>\n"
+        f"{T2}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
+        f"{T1}</AdaptiveQ>\n"
+        f"{T1}<AdaptiveQAffectsShelves Value=\"false\" />\n"
+        f"{T}</Eq8>\n"
+    )
+    return xml, id_start
+
+# ==============================================================================
+# CHOPPER PAD HELPERS
+# ==============================================================================
+
+def _is_chopper_pad(pad):
+    """Return True if pad is a Koala Chopper pad."""
+    return pad.get('type') == 'synth' and pad.get('synth') == 'CHOPPER'
+
+
+def _get_chopper_params(pad):
+    """Extract chopper parameters from a chopper pad dict.
+
+    Returns a dict with:
+      slice_count, trigger_mode (0=Note,1=Velocity,2=Random),
+      mono, one_shot, play_thru, vol, pan, pitch
+    """
+    sp  = pad.get('synthParams', {})
+    pp  = sp.get('padParams', {})
+    slices = pad.get('chops', {}).get('slices', [])
+    eq = pp.get('eq', {})
+    return {
+        'slice_count':  max(1, len(slices)),
+        'trigger_mode': float(sp.get('TRIGGER MODE', 0.0)),
+        'slice_mode':   float(sp.get('SLICE MODE', 1.0)),  # 0=Auto, 1=Equal
+        'slice_starts': [int(s.get('start', 0)) for s in slices],  # frames @48kHz
+        'mono':         float(sp.get('MONO', 1.0)) == 1.0,
+        'one_shot':     float(sp.get('ONE SHOT', 0.0)) == 1.0,
+        'play_thru':    float(sp.get('PLAY THRU', 0.0)) == 1.0,
+        'vol':          float(pp.get('vol', 1.0) or 1.0),
+        'pan':          float(pp.get('pan', 0.5) or 0.5),
+        'pitch':        float(pp.get('pitch', 0.0) or 0.0),
+        'eq':           eq,
+    }
+
+
+
+
+def _manual_slice_points_xml(slice_starts_frames, tab_level=19):
+    """Build ManualSlicePoints XML from Koala slice start positions (frames @48kHz).
+    Each start frame is converted to seconds: TimeInSeconds = frame / 48000.
+    """
+    t = '\t' * tab_level
+    lines = []
+    for frame in slice_starts_frames:
+        secs = frame / 48000.0
+        lines.append(f'{t}<SlicePoint TimeInSeconds="{secs}" Rank="1" NormalizedEnergy="1" />')
+    t_open  = '\t' * (tab_level - 1)
+    return f'{t_open}<ManualSlicePoints>\n' + '\n'.join(lines) + f'\n{t_open}</ManualSlicePoints>\n'
+
+def _midi_random_device_xml(slice_count, id_start, tab_level=7):
+    """Build a MidiRandom device XML block for a chopper pad in Random mode.
+    Choices is set to slice_count so the random range covers all slices.
+    tab_level: indentation depth of the MidiRandom element (7 for standalone
+      Simpler tracks, 13 for drum branch device chains).
+    Returns (xml_string, new_id_start).
+    """
+    def _uid():
+        nonlocal id_start
+        v = id_start; id_start += 1; return v
+
+    t7  = '\t' * tab_level
+    t8  = '\t' * (tab_level + 1)
+    t9  = '\t' * (tab_level + 2)
+    t10 = '\t' * (tab_level + 3)
+    t11 = '\t' * (tab_level + 4)
+
+    dev_id    = _uid()
+    on_at     = _uid()
+    pointee   = _uid()
+    preset_id = _uid()
+    c_at = _uid(); c_mt = _uid()   # Chance
+    ch_at= _uid(); ch_mt= _uid()   # Choices
+    sc_at= _uid(); sc_mt= _uid()   # Scale
+    si_at= _uid()                   # Sign
+    al_at= _uid()                   # Alternate
+    uc_at= _uid()                   # UseCurrentScale
+
+    xml = (
+        f'{t7}<MidiRandom Id="{dev_id}">\n'
+        f'{t8}<LomId Value="0" />\n'
+        f'{t8}<LomIdView Value="0" />\n'
+        f'{t8}<IsExpanded Value="true" />\n'
+        f'{t8}<BreakoutIsExpanded Value="false" />\n'
+        f'{t8}<On>\n'
+        f'{t9}<LomId Value="0" />\n'
+        f'{t9}<Manual Value="true" />\n'
+        f'{t9}<AutomationTarget Id="{on_at}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</AutomationTarget>\n'
+        f'{t9}<MidiCCOnOffThresholds>\n'
+        f'{t10}<Min Value="64" />\n'
+        f'{t10}<Max Value="127" />\n'
+        f'{t9}</MidiCCOnOffThresholds>\n'
+        f'{t8}</On>\n'
+        f'{t8}<ModulationSourceCount Value="0" />\n'
+        f'{t8}<ParametersListWrapper LomId="0" />\n'
+        f'{t8}<Pointee Id="{pointee}" />\n'
+        f'{t8}<LastSelectedTimeableIndex Value="2" />\n'
+        f'{t8}<LastSelectedClipEnvelopeIndex Value="2" />\n'
+        f'{t8}<LastPresetRef>\n'
+        f'{t9}<Value>\n'
+        f'{t10}<AbletonDefaultPresetRef Id="{preset_id}">\n'
+        f'{t11}<FileRef>\n'
+        f'{t11}<RelativePathType Value="7" />\n'
+        f'{t11}<RelativePath Value="Devices/MIDI Effects/Random" />\n'
+        f'{t11}<Path Value="/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/Builtin/Devices/MIDI Effects/Random" />\n'
+        f'{t11}<Type Value="2" />\n'
+        f'{t11}<LivePackName Value="" />\n'
+        f'{t11}<LivePackId Value="" />\n'
+        f'{t11}<OriginalFileSize Value="0" />\n'
+        f'{t11}<OriginalCrc Value="0" />\n'
+        f'{t11}<SourceHint Value="" />\n'
+        f'{t11}</FileRef>\n'
+        f'{t11}<DeviceId Name="" />\n'
+        f'{t10}</AbletonDefaultPresetRef>\n'
+        f'{t9}</Value>\n'
+        f'{t8}</LastPresetRef>\n'
+        f'{t8}<LockedScripts />\n'
+        f'{t8}<IsFolded Value="false" />\n'
+        f'{t8}<ShouldShowPresetName Value="true" />\n'
+        f'{t8}<UserName Value="" />\n'
+        f'{t8}<Annotation Value="" />\n'
+        f'{t8}<SourceContext>\n'
+        f'{t9}<Value />\n'
+        f'{t8}</SourceContext>\n'
+        f'{t8}<MpePitchBendUsesTuning Value="true" />\n'
+        f'{t8}<ViewData Value="{{}}" />\n'
+        f'{t8}<OverwriteProtectionNumber Value="3075" />\n'
+        f'{t8}<Chance>\n'
+        f'{t9}<LomId Value="0" />\n'
+        f'{t9}<Manual Value="1" />\n'
+        f'{t9}<MidiControllerRange>\n'
+        f'{t10}<Min Value="0" />\n'
+        f'{t10}<Max Value="1" />\n'
+        f'{t9}</MidiControllerRange>\n'
+        f'{t9}<AutomationTarget Id="{c_at}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</AutomationTarget>\n'
+        f'{t9}<ModulationTarget Id="{c_mt}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</ModulationTarget>\n'
+        f'{t8}</Chance>\n'
+        f'{t8}<Choices>\n'
+        f'{t9}<LomId Value="0" />\n'
+        f'{t9}<Manual Value="{slice_count}" />\n'
+        f'{t9}<MidiControllerRange>\n'
+        f'{t10}<Min Value="1" />\n'
+        f'{t10}<Max Value="24" />\n'
+        f'{t9}</MidiControllerRange>\n'
+        f'{t9}<AutomationTarget Id="{ch_at}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</AutomationTarget>\n'
+        f'{t9}<ModulationTarget Id="{ch_mt}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</ModulationTarget>\n'
+        f'{t8}</Choices>\n'
+        f'{t8}<Scale>\n'
+        f'{t9}<LomId Value="0" />\n'
+        f'{t9}<Manual Value="1" />\n'
+        f'{t9}<MidiControllerRange>\n'
+        f'{t10}<Min Value="1" />\n'
+        f'{t10}<Max Value="24" />\n'
+        f'{t9}</MidiControllerRange>\n'
+        f'{t9}<AutomationTarget Id="{sc_at}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</AutomationTarget>\n'
+        f'{t9}<ModulationTarget Id="{sc_mt}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</ModulationTarget>\n'
+        f'{t8}</Scale>\n'
+        f'{t8}<Sign>\n'
+        f'{t9}<LomId Value="0" />\n'
+        f'{t9}<Manual Value="0" />\n'
+        f'{t9}<AutomationTarget Id="{si_at}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</AutomationTarget>\n'
+        f'{t9}<MidiControllerRange>\n'
+        f'{t10}<Min Value="0" />\n'
+        f'{t10}<Max Value="2" />\n'
+        f'{t9}</MidiControllerRange>\n'
+        f'{t8}</Sign>\n'
+        f'{t8}<Alternate>\n'
+        f'{t9}<LomId Value="0" />\n'
+        f'{t9}<Manual Value="false" />\n'
+        f'{t9}<AutomationTarget Id="{al_at}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</AutomationTarget>\n'
+        f'{t9}<MidiCCOnOffThresholds>\n'
+        f'{t10}<Min Value="64" />\n'
+        f'{t10}<Max Value="127" />\n'
+        f'{t9}</MidiCCOnOffThresholds>\n'
+        f'{t8}</Alternate>\n'
+        f'{t8}<UseCurrentScale>\n'
+        f'{t9}<LomId Value="0" />\n'
+        f'{t9}<Manual Value="false" />\n'
+        f'{t9}<AutomationTarget Id="{uc_at}">\n'
+        f'{t10}<LockEnvelope Value="0" />\n'
+        f'{t9}</AutomationTarget>\n'
+        f'{t9}<MidiCCOnOffThresholds>\n'
+        f'{t10}<Min Value="64" />\n'
+        f'{t10}<Max Value="127" />\n'
+        f'{t9}</MidiCCOnOffThresholds>\n'
+        f'{t8}</UseCurrentScale>\n'
+        f'{t7}</MidiRandom>\n'
+    )
+    return xml, id_start
+
+
+def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, id_start,
+                               wav_abs_path=None, chopper_params=None):
+    """
+    Build a complete inner DeviceChain for a note-mode or chopper Simpler track.
+
+    For normal pads applies: vol, pan, pitch, tune, speed, attack, release,
+      tone, start, end, looping, oneshot, stretching, fadeIn, fadeOut, trim.
+
+    chopper_params: dict from _get_chopper_params() — when set, switches the
+      Simpler to Slice/Region mode and sets chopper-specific parameters.
+      MidiRandom device is injected for Random trigger mode.
 
     wav_abs_path: absolute path to the extracted WAV on disk (used for trim).
     """
@@ -2629,95 +3266,120 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
     last_close = tpl.rfind('</DeviceChain>')
     tpl = tpl[:last_close].rstrip()
 
-    # ── Sample region / playback ───────────────────────────────────────────
-    # Trim: add proportion of total frames to start_pt
-    koala_trim  = float(pad_data.get("trim", 0.0) or 0.0)
-    trim_frames = 0
-    if koala_trim > 0.0 and wav_abs_path and os.path.isfile(wav_abs_path):
-        try:
-            with wave.open(wav_abs_path, 'rb') as _wf:
-                total_frames = _wf.getnframes()
-            trim_frames = int(round(koala_trim * total_frames))
-        except Exception:
-            trim_frames = 0
-
-    start_pt = int(pad_data.get("start", 0) or 0) + trim_frames
-    end_pt   = int(pad_data.get("end",   0) or 0)
-    if end_pt > 0:
-        start_pt = min(start_pt, end_pt - 1)
-    loop_on   = str(pad_data.get("looping", "false")).lower() == "true"
-    one_shot  = str(pad_data.get("oneshot", "false")).lower() == "true"
-    is_warped = "true" if pad_data.get("stretching") is True else "false"
-    loop_mode    = "0" if loop_on else "3"
-    loop_on_val  = "true" if loop_on else "false"
-    playback_mode = "1" if one_shot else "0"
-
-    # ── Volume ────────────────────────────────────────────────────────────
+    # ── Chopper vs normal pad parameter extraction ────────────────────────
     _ALS_VOL_MIN = 0.0003162277571
-    koala_vol = float(pad_data.get("vol", 1.0) or 1.0)
-    als_vol   = max(_ALS_VOL_MIN, koala_vol ** 4)
 
-    # ── Pan ───────────────────────────────────────────────────────────────
-    koala_pan = float(pad_data.get("pan", 0.5) or 0.5)
-    als_pan   = round(koala_pan * 2.0 - 1.0, 10)
-
-    # ── Pitch + Speed + Tune ──────────────────────────────────────────────
-    koala_pitch = float(pad_data.get("pitch", 0.0) or 0.0)
-    koala_speed = float(pad_data.get("speed", 1.0) or 1.0)
-    if abs(koala_speed - 1.0) < 1e-6:
-        speed_semitones_total = 0.0
-    else:
-        speed_semitones_total = 12.0 * math.log2(max(koala_speed, 1e-6))
-    speed_semi_int = int(round(speed_semitones_total))
-    speed_cents    = (speed_semitones_total - speed_semi_int) * 100.0
-    als_pitch      = int(round(koala_pitch)) + speed_semi_int
-    koala_tune     = float(pad_data.get("tune", 0.0) or 0.0)
-    tune_cents     = koala_tune * 100.0
-    als_fine       = max(-50.0, min(50.0, tune_cents + speed_cents))
-
-    # ── Attack ────────────────────────────────────────────────────────────
-    _ALS_ATK_MIN = 0.1000000015
-    _ALS_ATK_MAX = 20000.0
-    _KOA_ATK_MIN = 0.00011
-    _KOA_ATK_MAX = 3.0
-    koala_attack = float(pad_data.get("attack", _KOA_ATK_MIN) or _KOA_ATK_MIN)
-    if koala_attack <= _KOA_ATK_MIN:
-        als_attack = _ALS_ATK_MIN
-    elif koala_attack >= _KOA_ATK_MAX:
-        als_attack = _ALS_ATK_MAX
-    else:
-        _t = (math.log(koala_attack) - math.log(_KOA_ATK_MIN)) / \
-             (math.log(_KOA_ATK_MAX) - math.log(_KOA_ATK_MIN))
-        als_attack = _ALS_ATK_MIN * (_ALS_ATK_MAX / _ALS_ATK_MIN) ** _t
-
-    # ── Release ───────────────────────────────────────────────────────────
-    _ALS_REL_MIN = 1.0
-    _ALS_REL_MAX = 60000.0
-    _KOA_REL_MAX = 3.0
-    koala_release = float(pad_data.get("release", 0.0) or 0.0)
-    if koala_release <= 0.0:
-        als_release = _ALS_REL_MIN
-    elif koala_release >= _KOA_REL_MAX:
-        als_release = _ALS_REL_MAX
-    else:
-        _t = koala_release / _KOA_REL_MAX
-        als_release = _ALS_REL_MIN * (_ALS_REL_MAX / _ALS_REL_MIN) ** _t
-
-    # ── FadeIn / FadeOut ──────────────────────────────────────────────────
-    _ALS_FADE_MAX = 2000.0
-    koala_fade_in  = float(pad_data.get("fadeIn",  0.0) or 0.0)
-    koala_fade_out = float(pad_data.get("fadeOut", 0.0) or 0.0)
-    als_fade_in    = koala_fade_in  * _ALS_FADE_MAX
-    als_fade_out   = koala_fade_out * _ALS_FADE_MAX if koala_fade_out > 0.0 else 0.1000000015
-
-    # ── Tone → Filter ─────────────────────────────────────────────────────
-    koala_tone = float(pad_data.get("tone", 0.0) or 0.0)
-    if abs(koala_tone) < 1e-6:
+    if chopper_params:
+        # Chopper pads: playback params come from synthParams.padParams.
+        # start/end/loop/oneshot/stretch/attack/release/fade/tone stay at
+        # template defaults — Simpler slice mode handles playback.
+        start_pt      = 0
+        end_pt        = 0
+        loop_on       = False
+        is_warped     = "false"
+        loop_mode     = "3"
+        loop_on_val   = "false"
+        playback_mode = "0"  # overridden below for slice Globals
+        koala_vol   = chopper_params['vol']
+        koala_pan   = chopper_params['pan']
+        koala_pitch = chopper_params['pitch']
+        als_vol     = max(_ALS_VOL_MIN, koala_vol ** 4)
+        als_pan     = round(koala_pan * 2.0 - 1.0, 10)
+        als_pitch   = int(round(koala_pitch))
+        als_fine    = 0.0
+        als_attack  = 0.1000000015
+        als_release = 1.0
+        als_fade_in = 0.0
+        als_fade_out = 0.1000000015
         als_filter_type = None
-    elif koala_tone < 0:
-        als_filter_type = "0"   # Low Pass
     else:
-        als_filter_type = "1"   # High Pass
+        # ── Sample region / playback ─────────────────────────────────────
+        koala_trim  = float(pad_data.get("trim", 0.0) or 0.0)
+        trim_frames = 0
+        if koala_trim > 0.0 and wav_abs_path and os.path.isfile(wav_abs_path):
+            try:
+                with wave.open(wav_abs_path, 'rb') as _wf:
+                    total_frames = _wf.getnframes()
+                trim_frames = int(round(koala_trim * total_frames))
+            except Exception:
+                trim_frames = 0
+
+        start_pt = int(pad_data.get("start", 0) or 0) + trim_frames
+        end_pt   = int(pad_data.get("end",   0) or 0)
+        if end_pt > 0:
+            start_pt = min(start_pt, end_pt - 1)
+        loop_on   = str(pad_data.get("looping", "false")).lower() == "true"
+        one_shot  = str(pad_data.get("oneshot", "false")).lower() == "true"
+        is_warped = "true" if pad_data.get("stretching") is True else "false"
+        loop_mode    = "0" if loop_on else "3"
+        loop_on_val  = "true" if loop_on else "false"
+        playback_mode = "1" if one_shot else "0"
+
+        # ── Volume ───────────────────────────────────────────────────────
+        koala_vol = float(pad_data.get("vol", 1.0) or 1.0)
+        als_vol   = max(_ALS_VOL_MIN, koala_vol ** 4)
+
+        # ── Pan ──────────────────────────────────────────────────────────
+        koala_pan = float(pad_data.get("pan", 0.5) or 0.5)
+        als_pan   = round(koala_pan * 2.0 - 1.0, 10)
+
+        # ── Pitch + Speed + Tune ─────────────────────────────────────────
+        koala_pitch = float(pad_data.get("pitch", 0.0) or 0.0)
+        koala_speed = float(pad_data.get("speed", 1.0) or 1.0)
+        if abs(koala_speed - 1.0) < 1e-6:
+            speed_semitones_total = 0.0
+        else:
+            speed_semitones_total = 12.0 * math.log2(max(koala_speed, 1e-6))
+        speed_semi_int = int(round(speed_semitones_total))
+        speed_cents    = (speed_semitones_total - speed_semi_int) * 100.0
+        als_pitch      = int(round(koala_pitch)) + speed_semi_int
+        koala_tune     = float(pad_data.get("tune", 0.0) or 0.0)
+        tune_cents     = koala_tune * 100.0
+        als_fine       = max(-50.0, min(50.0, tune_cents + speed_cents))
+
+        # ── Attack ───────────────────────────────────────────────────────
+        _ALS_ATK_MIN = 0.1000000015
+        _ALS_ATK_MAX = 20000.0
+        _KOA_ATK_MIN = 0.00011
+        _KOA_ATK_MAX = 3.0
+        koala_attack = float(pad_data.get("attack", _KOA_ATK_MIN) or _KOA_ATK_MIN)
+        if koala_attack <= _KOA_ATK_MIN:
+            als_attack = _ALS_ATK_MIN
+        elif koala_attack >= _KOA_ATK_MAX:
+            als_attack = _ALS_ATK_MAX
+        else:
+            _t = (math.log(koala_attack) - math.log(_KOA_ATK_MIN)) / \
+                 (math.log(_KOA_ATK_MAX) - math.log(_KOA_ATK_MIN))
+            als_attack = _ALS_ATK_MIN * (_ALS_ATK_MAX / _ALS_ATK_MIN) ** _t
+
+        # ── Release ──────────────────────────────────────────────────────
+        _ALS_REL_MIN = 1.0
+        _ALS_REL_MAX = 60000.0
+        _KOA_REL_MAX = 3.0
+        koala_release = float(pad_data.get("release", 0.0) or 0.0)
+        if koala_release <= 0.0:
+            als_release = _ALS_REL_MIN
+        elif koala_release >= _KOA_REL_MAX:
+            als_release = _ALS_REL_MAX
+        else:
+            _t = koala_release / _KOA_REL_MAX
+            als_release = _ALS_REL_MIN * (_ALS_REL_MAX / _ALS_REL_MIN) ** _t
+
+        # ── FadeIn / FadeOut ─────────────────────────────────────────────
+        _ALS_FADE_MAX = 2000.0
+        koala_fade_in  = float(pad_data.get("fadeIn",  0.0) or 0.0)
+        koala_fade_out = float(pad_data.get("fadeOut", 0.0) or 0.0)
+        als_fade_in    = koala_fade_in  * _ALS_FADE_MAX
+        als_fade_out   = koala_fade_out * _ALS_FADE_MAX if koala_fade_out > 0.0 else 0.1000000015
+
+        # ── Tone → Filter ─────────────────────────────────────────────────
+        koala_tone = float(pad_data.get("tone", 0.0) or 0.0)
+        if abs(koala_tone) < 1e-6:
+            als_filter_type = None
+        elif koala_tone < 0:
+            als_filter_type = "0"   # Low Pass
+        else:
+            als_filter_type = "1"   # High Pass
 
     # ── Patch template ────────────────────────────────────────────────────
     tpl = re.sub(r'<UserName Value="[^"]*"',
@@ -2735,12 +3397,43 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
                  tpl, count=1, flags=re.DOTALL)
     tpl = re.sub(r'<IsWarped Value="[^"]*"',
                  f'<IsWarped Value="{is_warped}"', tpl, count=1)
+    # ── Globals PlaybackMode: chopper=2 (Slice), normal=0/1 (Classic/OneShot)
+    globals_pm = "2" if chopper_params else playback_mode
     tpl = re.sub(r'<PlaybackMode Value="[^"]*"',
-                 f'<PlaybackMode Value="{playback_mode}"', tpl, count=1)
-    # ReleaseLoop Mode (loop_mode)
+                 f'<PlaybackMode Value="{globals_pm}"', tpl, count=1)
+    # ── ReleaseLoop Mode
     tpl = re.sub(r'(<ReleaseLoop>.*?<Mode Value=")[^"]*(")',
                  lambda m: f'{m.group(1)}{loop_mode}{m.group(2)}',
                  tpl, count=1, flags=re.DOTALL)
+    # ── Chopper-specific: SlicingStyle, SlicingRegions, NumVoices, SimplerSlicing
+    if chopper_params:
+        N = chopper_params['slice_count']
+        is_auto = chopper_params.get('slice_mode', 1.0) == 0.0
+        # SlicingStyle: 3=Manual (Auto chop), 2=Region/Equal
+        slicing_style = "3" if is_auto else "2"
+        tpl = re.sub(r'<SlicingStyle Value="[^"]*"',
+                     f'<SlicingStyle Value="{slicing_style}"', tpl, count=1)
+        tpl = re.sub(r'<SlicingRegions Value="[^"]*"',
+                     f'<SlicingRegions Value="{N}"', tpl, count=1)
+        num_voices = "1" if chopper_params['mono'] else "5"
+        tpl = re.sub(r'<NumVoices Value="[^"]*"',
+                     f'<NumVoices Value="{num_voices}"', tpl, count=1)
+        # SimplerSlicing PlaybackMode: 0=Gate, 2=Thru
+        # ONE SHOT does not change slice playback mode (it's handled by NumVoices=1)
+        if chopper_params['play_thru']:
+            slicing_pm = "2"
+        else:
+            slicing_pm = "0"
+        tpl = re.sub(r'(<SimplerSlicing>\s*)<PlaybackMode Value="[^"]*"',
+                     lambda m: m.group(1) + f'<PlaybackMode Value="{slicing_pm}"',
+                     tpl, count=1, flags=re.DOTALL)
+        # Auto chop: inject ManualSlicePoints
+        if is_auto and chopper_params.get('slice_starts'):
+            msp_xml = _manual_slice_points_xml(chopper_params['slice_starts'], tab_level=19)
+            tpl = tpl.replace('<ManualSlicePoints />\n', msp_xml, 1)
+            if '<ManualSlicePoints />\n' not in tpl:
+                tpl = re.sub(r'<ManualSlicePoints>\s*</ManualSlicePoints>',
+                             msp_xml.rstrip(), tpl, count=1)
 
     # Volume
     tpl = re.sub(r'(<Volume Value=")[^"]*(")',
@@ -2961,6 +3654,22 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
             r'(<Filter>.*?<Slot>\s*)<Value />',
             lambda m: m.group(1) + f'<Value>\n{sf}{t15}</Value>',
             remapped, count=1, flags=re.DOTALL)
+
+    # ── Inject MidiRandom for Random trigger mode ────────────────────────
+    if chopper_params and chopper_params['trigger_mode'] == 2.0:
+        mr_xml, id_start = _midi_random_device_xml(chopper_params['slice_count'], id_start)
+        # Insert MidiRandom before OriginalSimpler inside <Devices>
+        remapped = remapped.replace('<Devices>\n', '<Devices>\n' + mr_xml, 1)
+
+    # ── Inject EQ Eight after Simpler if pad EQ is enabled ───────────────
+    eq_data = (chopper_params.get('eq', {}) if chopper_params
+               else pad_data.get('eq', {}))
+    if eq_data and str(eq_data.get('enabled', 'false')).lower() == 'true':
+        eq8_xml, id_start = _eq8_device_xml(eq_data, id_start, tab_level=7)
+        # Append after </OriginalSimpler> before </Devices>
+        remapped = re.sub(r'(</OriginalSimpler>)(\s*</Devices>)',
+                          lambda m: m.group(1) + '\n' + eq8_xml + m.group(2),
+                          remapped, count=1)
 
     return remapped, id_start
 
@@ -3554,8 +4263,9 @@ def _bus_audio_branch_send_infos(koala_bus, id_counter):
 
         s_id  = _uid()
         s_mid = _uid()
+        ab_id = _uid()
         xml += (
-            f'\t\t\t\t\t\t\t\t\t\t\t\t<AudioBranchSendInfo Id="{idx + 1}">\n'
+            f'\t\t\t\t\t\t\t\t\t\t\t\t<AudioBranchSendInfo Id="{ab_id}">\n'
             f'\t\t\t\t\t\t\t\t\t\t\t\t\t<Send>\n'
             f'\t\t\t\t\t\t\t\t\t\t\t\t\t\t<LomId Value="0" />\n'
             f'\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Manual Value="{val}" />\n'
@@ -3668,6 +4378,38 @@ def build_als(bpm, drum_tracks, simpler_tracks,
     midi_xml  = ""
     track_idx = 0
 
+    # Build a lookup: group letter -> list of simpler tracks belonging to that group
+    # e.g. 'C' -> [(label, rel_path, pad_data, display_name, wav_abs, chopper_p), ...]
+    simpler_by_group = {}
+    for st in simpler_tracks:
+        group_letter = st[0][0]  # first char of pad_label_str e.g. 'C' from 'C05'
+        simpler_by_group.setdefault(group_letter, []).append(st)
+
+    def _build_simpler_track(pad_label_str, rel_path, pad_data, display_name, wav_abs, chopper_p):
+        nonlocal track_idx, id_start
+        colour = _ALS_TRACK_COLOURS[track_idx % len(_ALS_TRACK_COLOURS)]
+        device_chain_xml, id_start = _make_simpler_device_chain(
+            rel_path, pad_data, display_name, pad_label_str, id_start,
+            wav_abs_path=wav_abs, chopper_params=chopper_p)
+        track_display_name = f"{pad_label_str} Chopper" if chopper_p else f"Pad {pad_label_str}"
+        new_track, id_start = _als_remap_track(
+            template_track, 12 + track_idx, track_display_name, colour, id_start, track_idx)
+        new_track = new_track.replace("<DeviceChain>\n\t\t\t\t\t\t<Devices />\n\t\t\t\t\t\t<SignalModulations />\n\t\t\t\t\t</DeviceChain>",
+                                      device_chain_xml, 1)
+        clips_for_simpler = {}
+        for pad_num, slots in simpler_clips.items():
+            if pad_label(pad_num) == pad_label_str:
+                clips_for_simpler = slots
+                break
+        clips_by_slot = {}
+        for slot_idx, (clip_name, num_bars, note_events) in clips_for_simpler.items():
+            clips_by_slot[slot_idx] = _midi_clip_xml(clip_name, num_bars, note_events,
+                                                      clip_colour=colour)
+        new_track = _als_expand_clipslots(new_track, n_scenes)
+        if clips_by_slot:
+            new_track = _inject_clips(new_track, clips_by_slot)
+        return "\t\t\t" + new_track.strip() + "\n"
+
     for group_name, group_index, adg_pads in drum_tracks:
         colour = _ALS_TRACK_COLOURS[track_idx % len(_ALS_TRACK_COLOURS)]
         # The MidiTrack ID is assigned by _als_remap_track as (12 + track_idx).
@@ -3693,30 +4435,11 @@ def build_als(bpm, drum_tracks, simpler_tracks,
         midi_xml += "\t\t\t" + new_track.strip() + "\n"
         track_idx += 1
 
-    for pad_label_str, rel_path, pad_data, display_name, wav_abs in simpler_tracks:
-        colour = _ALS_TRACK_COLOURS[track_idx % len(_ALS_TRACK_COLOURS)]
-        device_chain_xml, id_start = _make_simpler_device_chain(
-            rel_path, pad_data, display_name, pad_label_str, id_start, wav_abs)
-        new_track, id_start = _als_remap_track(
-            template_track, 12 + track_idx, f"Pad {pad_label_str}", colour, id_start, track_idx)
-        new_track = new_track.replace("<DeviceChain>\n\t\t\t\t\t\t<Devices />\n\t\t\t\t\t\t<SignalModulations />\n\t\t\t\t\t</DeviceChain>",
-                                      device_chain_xml, 1)
-        # Inject MIDI clips into ClipSlots for this Simpler track
-        # Match by pad_label_str -> look up pad_num in simpler_clips
-        clips_for_simpler = {}
-        for pad_num, slots in simpler_clips.items():
-            if pad_label(pad_num) == pad_label_str:
-                clips_for_simpler = slots
-                break
-        clips_by_slot = {}
-        for slot_idx, (clip_name, num_bars, note_events) in clips_for_simpler.items():
-            clips_by_slot[slot_idx] = _midi_clip_xml(clip_name, num_bars, note_events,
-                                                      clip_colour=colour)
-        new_track = _als_expand_clipslots(new_track, n_scenes)
-        if clips_by_slot:
-            new_track = _inject_clips(new_track, clips_by_slot)
-        midi_xml += "\t\t\t" + new_track.strip() + "\n"
-        track_idx += 1
+        # Immediately append Simpler tracks belonging to this group
+        group_letter = group_name[-1]  # e.g. 'A' from 'Group A'
+        for st in simpler_by_group.get(group_letter, []):
+            midi_xml += _build_simpler_track(*st)
+            track_idx += 1
 
     return_xml       = "\n".join(return_blocks)
 
@@ -3776,28 +4499,24 @@ def build_als(bpm, drum_tracks, simpler_tracks,
             return xml
 
         # Replace each track's 2-holder <SendInfos> block with a 4-holder version.
-        # After _als_remap_ids the AutomationTarget IDs inside each holder are unique,
-        # so we use regex to find and replace the entire SendInfos content per track.
-        # MidiTracks get holder IDs 4,5,6,7 (matching the reference file).
-        # All other tracks (MasterTrack, PreHearTrack, ReturnTracks) get IDs 0,1,2,3.
-        midi_4_holders   = _make_4_send_holders(4)
-        other_4_holders  = _make_4_send_holders(0)
-
-        def _replace_track_sends(xml, track_tag, sends_tag, holder_xml, indent):
-            """Replace the send holder block inside every <track_tag>."""
+        # Generate FRESH IDs per track so AutomationTargets are globally unique.
+        # MidiTracks get holder IDs 4,5,6,7; others get IDs 0,1,2,3.
+        def _replace_track_sends(xml, track_tag, sends_tag, holder_start_id, indent):
+            """Replace send holders in every <track_tag>, generating unique IDs per track."""
             pattern = (
                 r'(<%s [^>]+>(?:(?!</%s>).)*?)'
                 r'(<%s>\s*<TrackSendHolder.*?</%s>)'
                 % (track_tag, track_tag, sends_tag, sends_tag)
             )
             def replacer(m):
+                holder_xml = _make_4_send_holders(holder_start_id)
                 return m.group(1) + f'<{sends_tag}>\n' + holder_xml + indent + f'</{sends_tag}>'
             return re.sub(pattern, replacer, xml, flags=re.DOTALL)
 
         # MidiTrack / MainTrack / PreHearTrack use <Sends> tag, 6-tab indent close
-        result = _replace_track_sends(result, 'MidiTrack',   'Sends', midi_4_holders,  '\t\t\t\t\t\t')
-        result = _replace_track_sends(result, 'MainTrack',   'Sends', other_4_holders, '\t\t\t\t\t\t')
-        result = _replace_track_sends(result, 'PreHearTrack','Sends', other_4_holders, '\t\t\t\t\t\t')
+        result = _replace_track_sends(result, 'MidiTrack',   'Sends', 4, '\t\t\t\t\t\t')
+        result = _replace_track_sends(result, 'MainTrack',   'Sends', 0, '\t\t\t\t\t\t')
+        result = _replace_track_sends(result, 'PreHearTrack','Sends', 0, '\t\t\t\t\t\t')
         # ReturnTracks: Sends holders are already set to 4 inside _bus_return_track_xml.
         # No further patching needed for ReturnTracks here.
 
@@ -4025,7 +4744,8 @@ def main():
                 else:
                     wav_path = extracted_wavs[sample_id]
                     rel_path = f"Samples/Imported/{os.path.basename(wav_path)}"
-                adg_pads.append((pad_num, pad_data, os.path.basename(wav_path), rel_path, 1, wav_path))
+                cp_pad = _get_chopper_params(pad_data) if _is_chopper_pad(pad_data) else None
+                adg_pads.append((pad_num, pad_data, os.path.basename(wav_path), rel_path, 1, wav_path, cp_pad))
             drum_tracks.append((group_name, i, adg_pads))
 
         # Add empty drum rack tracks for groups that have sequence notes
@@ -4051,13 +4771,16 @@ def main():
 
         # ── Step 1b: Build Simpler tracks for note-mode pads ──────────────────
         print(f"\n── Step 1b: Building Simpler tracks for note-mode pads")
+        # Collect chopper pad numbers so we exclude them from note-mode detection
+        _chopper_nums_temp = {int(p.get("pad")) for p in pads
+                              if _is_chopper_pad(p) and p.get("pad") is not None}
         note_mode_pad_nums = set()
         for seq in seq_data.get("sequences", []):
             notes = seq.get("noteSequence", {}).get("pattern", {}).get("notes") or []
             for n in notes:
-                if n.get("pitch", 0.0) != 0.0:
+                if n.get("pitch", 0.0) != 0.0 and n["num"] not in _chopper_nums_temp:
                     note_mode_pad_nums.add(n["num"])
-        if keyboard_mode and selected_pad >= 0:
+        if keyboard_mode and selected_pad >= 0 and selected_pad not in _chopper_nums_temp:
             note_mode_pad_nums.add(selected_pad)
 
         pad_data_by_num = {int(p.get("pad")): p for p in pads if p.get("pad") is not None}
@@ -4079,8 +4802,43 @@ def main():
                 print(f"   ⚠️  Pad {pad_num}: no sample found, skipping"); continue
             label_str    = pad_label(pad_num)
             display_name = os.path.splitext(os.path.basename(wav_abs))[0]
-            simpler_tracks.append((label_str, rel_path, pad_data_n, display_name, wav_abs))
+            simpler_tracks.append((label_str, rel_path, pad_data_n, display_name, wav_abs, None))
             print(f"   → Pad {label_str}  ({display_name})")
+
+        # ── Step 1c: Build Simpler tracks for chopper pads ──────────────────
+        print(f"\n── Step 1c: Building Simpler tracks for chopper pads")
+        chopper_pad_info = {}  # pad_num -> chopper_params
+        for pad in pads:
+            if not _is_chopper_pad(pad):
+                continue
+            try:
+                pad_num   = int(pad.get("pad"))
+                sample_id = int(pad.get("sampleId", -1))
+            except:
+                continue
+            if sample_id not in extracted_wavs:
+                print(f"   ⚠️  Chopper pad {pad_num}: no sample, skipping")
+                continue
+            cp       = _get_chopper_params(pad)
+            wav_abs  = extracted_wavs[sample_id]
+            rel_path = f"Samples/Imported/{os.path.basename(wav_abs)}"
+            label_str    = pad_label(pad_num)
+            display_name = os.path.splitext(os.path.basename(wav_abs))[0]
+            trigger_name = {0.0: "Note", 1.0: "Velocity", 2.0: "Random"}.get(cp['trigger_mode'], "?")
+            chopper_pad_info[pad_num] = cp
+            # Random is handled entirely in the drum rack (MidiRandom in branch)
+            # so no separate Simpler track is needed for it.
+            if cp['trigger_mode'] == 2.0:
+                print(f"   → Pad {label_str} [Chopper/Random, {cp['slice_count']} slices]  (drum rack only)")
+                continue
+            simpler_tracks.append((label_str, rel_path, pad, display_name, wav_abs, cp))
+            print(f"   → Pad {label_str} [Chopper/{trigger_name}, {cp['slice_count']} slices]  ({display_name})")
+        if not chopper_pad_info:
+            print("   (no chopper pads)")
+
+        # Sort all Simpler tracks by pad number so they appear in ascending order
+        # regardless of whether they were added in step 1b or 1c.
+        simpler_tracks.sort(key=lambda t: pad_num_from_label(t[0]))
 
         # ── Step 2: Parse sequences into MIDI clips ──────────────────────────
         print(f"\n── Step 2: Parsing MIDI sequences")
@@ -4092,7 +4850,8 @@ def main():
         # note_mode_pad_nums already computed above
         drum_clips, simpler_clips = build_sequence_clips(
             seq_data, keyboard_mode, selected_pad,
-            note_mode_pad_nums, group_index_map
+            note_mode_pad_nums, group_index_map,
+            chopper_pad_info=chopper_pad_info
         )
         total_clips = sum(len(v) for v in drum_clips.values()) + sum(len(v) for v in simpler_clips.values())
         print(f"   {total_clips} clip(s) generated")
@@ -4110,11 +4869,16 @@ def main():
                 last_used = si + 1  # 1-based
         n_scenes = max(8, min(32, last_used))
         # Build pad_bus_map: pad_num -> koala bus (-1=master, 0-3=bus A/B/C/D)
+        # Normal pads: bus at top-level pad["bus"]
+        # Chopper pads: bus at pad["synthParams"]["padParams"]["bus"]
         pad_bus_map = {}
         for pad in pads:
             try:
                 pnum = int(pad.get("pad"))
-                bus  = pad.get("bus", -1)
+                if _is_chopper_pad(pad):
+                    bus = pad.get("synthParams", {}).get("padParams", {}).get("bus", -1)
+                else:
+                    bus = pad.get("bus", -1)
                 pad_bus_map[pnum] = int(bus) if bus is not None else -1
             except (TypeError, ValueError):
                 pass

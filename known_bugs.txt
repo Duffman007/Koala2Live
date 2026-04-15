@@ -1,0 +1,2 @@
+Bus Solo in Koala does not work due to routing per pad
+No Mix Bus effects - except Side Chain

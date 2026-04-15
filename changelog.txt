@@ -1,34 +1,23 @@
-Koala2Live Changelog
-====================
-
-
-BETA 0.55
---------
-
- - Added sidechain
- - combined Bus Scripts
-
-BETA 0.5
---------
-
- - Added Bus per pad support via toggle
-
-
-BETA 0.34
---------
- - Corrected Pitch issues
- - Corrected Pan issues
- - Corrected Attack/Release issues
-
-
-
-BETA 0.3
---------
-- Initial release
-- Converts Koala Sampler .koala backup files to Ableton Live 12 project folders
-- Supports all 4 pad groups (A/B/C/D) with drum rack per group
-- MIDI clips generated from all sequences (up to 32 scenes)
-- Pad settings translated: volume, pan, pitch, attack, release
-- Supports both old and new Koala JSON sequence formats
-- Empty drum rack tracks created for groups with MIDI notes but no assigned pads
-- Valid Ableton project folder structure with AbletonProject.cfg
+v0.70 - Chopper Support Added
+        - Velocity linked to midi clip
+        - Random linked to Random Midi Device
+        - Note Mode linked to sampler track
+      - EQ per pad enabled
+      - mute per pad enabled
+      - sub-tracks layout reordered
+      - various bug fixes
+v0.60 - Initial Xcode release
+v0.55 - Added sidechain
+      - combined Bus Scripts
+v0.50 - Added Bus per pad support via toggle
+v0.34 - Corrected Pitch issues
+      - Corrected Pan issues
+      - Corrected Attack/Release issues
+v0.30 - Initial release
+      - Converts Koala Sampler .koala backup files to Ableton Live 12 project folders
+      - Supports all 4 pad groups (A/B/C/D) with drum rack per group
+      - MIDI clips generated from all sequences (up to 32 scenes)
+      - Pad settings translated: volume, pan, pitch, attack, release
+      - Supports both old and new Koala JSON sequence formats
+      - Empty drum rack tracks created for groups with MIDI notes but no assigned pads
+      - Valid Ableton project folder structure with AbletonProject.cfg
