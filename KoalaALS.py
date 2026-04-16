@@ -1,5 +1,5 @@
 """
-koalaALS.py  —  BUSSES VARIANT
+koalaALS.py  -  BUSSES VARIANT
 -------------------------------
 Koala Sampler .koala backup -> Ableton Live 12 project
 
@@ -49,12 +49,12 @@ PAD PARAMETERS TRANSLATED (v0.5)
     pitch         TransposeKey Manual             int(round(pitch))  [semitones]
     tune          TransposeFine Manual            tune * 100.0       [cents, ±50]
     speed         TransposeKey + TransposeFine    semitones = 12*log2(speed); integer
-                                                  part → TransposeKey offset, remainder
-                                                  cents → TransposeFine (combined w/ tune)
-    attack        AttackTime Manual               log-interp 0.00011→3.0 → 0.1→20000 ms
-    release       ReleaseTime Manual              log-interp 0.0→3.0     → 1→60000 ms
-    fadeIn        OneShotEnvelope FadeInTime      linear 0.0→1.0 → 0→2000 ms
-    fadeOut       OneShotEnvelope FadeOutTime     linear 0.0→1.0 → 0→2000 ms
+                                                  part -> TransposeKey offset, remainder
+                                                  cents -> TransposeFine (combined w/ tune)
+    attack        AttackTime Manual               log-interp 0.00011->3.0 -> 0.1->20000 ms
+    release       ReleaseTime Manual              log-interp 0.0->3.0     -> 1->60000 ms
+    fadeIn        OneShotEnvelope FadeInTime      linear 0.0->1.0 -> 0->2000 ms
+    fadeOut       OneShotEnvelope FadeOutTime     linear 0.0->1.0 -> 0->2000 ms
                                                   (0.0 keeps ALS default 0.1 ms)
     tone          SimplerFilter IsOn/Type/Freq    <0=LP, >0=HP, 0=off; 1001.69 Hz fixed
     start         SampleStart                     direct (sample frames)
@@ -85,6 +85,12 @@ NOTES
       and embedded as base64 constants (_DRUM_RACK_TPL_B64 etc)
 """
 
+
+import sys
+import io
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 import gzip
 import json
@@ -121,7 +127,7 @@ GROUP_SHIFT  = {"Group A": 0, "Group B": -16, "Group C": -32, "Group D": -48}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── ADG SECTION (from koalaadg30) ────────────────────────────────────────────
+# -- ADG SECTION (from koalaadg30) --------------------------------------------
 # ══════════════════════════════════════════════════════════════════════════════
 
 class IdCounter:
@@ -993,10 +999,10 @@ def make_adg_xml(adg_pads, group_index, group_letter):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── MIDI SECTION (from MIDISPLIT31) ──────────────────────────────────────────
+# -- MIDI SECTION (from MIDISPLIT31) ------------------------------------------
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Simpler_blank.adv embedded as base64 — no external file needed
+# Simpler_blank.adv embedded as base64 - no external file needed
 _BLANK_ADV_B64 = (
     "H4sIAAAAAAAAE+2dW1PjOBbHn+lPQeW9SezcoErdUw00O9RAk40ZZmtephRbEE87VtYXGnZrv/vK"
     "d0mWHNtNIMTqhxmwZNn6/XWObscC/PK0cg4fkefb2P3U044GvUPkmtiy3YdPvd9vLz4e9375/AF8"
@@ -1487,7 +1493,7 @@ def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nu
         keyboard_notes = [n for n in notes if n["num"] in note_mode_pads]
         chopper_notes  = [n for n in notes if n["num"] in chopper_pads_here]
 
-        # ── Drum group clips ──────────────────────────────────────────────────
+        # -- Drum group clips --------------------------------------------------
         group_events = {gname: [] for gname in group_index_map}
         for note in normal_notes:
             pad_num = note["num"]
@@ -1510,7 +1516,7 @@ def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nu
                 slot_idx  = seq_idx
                 drum_clips[gname][slot_idx] = (clip_name, num_bars, gevents)
 
-        # ── Simpler (note-mode) clips ─────────────────────────────────────────
+        # -- Simpler (note-mode) clips -----------------------------------------
         pad_events = {}
         for note in keyboard_notes:
             pad_num   = note["num"]
@@ -1530,7 +1536,7 @@ def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nu
             slot_idx  = seq_idx
             simpler_clips.setdefault(pad_num, {})[slot_idx] = (clip_name, num_bars, events)
 
-        # ── Chopper clips ─────────────────────────────────────────────────────
+        # -- Chopper clips -----------------------------------------------------
         chopper_events = {}
         for note in chopper_notes:
             pad_num = note["num"]
@@ -2157,7 +2163,7 @@ def _als_expand_scenes(xml, n_scenes):
 def _als_expand_all_clipslots(xml, n_scenes):
     """
     Expand EVERY ClipSlotList in the entire ALS XML from 8 to n_scenes slots.
-    This covers MidiTracks, ReturnTracks, MasterTrack, PreHearTrack — all of them.
+    This covers MidiTracks, ReturnTracks, MasterTrack, PreHearTrack - all of them.
     Ableton requires all tracks to have the same slot count as Scenes.
     """
     if n_scenes <= 8:
@@ -2217,7 +2223,7 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
     midi_track_id:  ALS MidiTrack ID (needed for routing target string).
     rt_ids:         list of 4 ReturnTrack IDs [A,B,C,D].
     koala_bus:      Koala bus value for this pad (-1=master, 0-3=bus).
-    chopper_params: dict from _get_chopper_params() — switches Simpler to
+    chopper_params: dict from _get_chopper_params() - switches Simpler to
                     Slice mode, sets SendingNote=35, injects MidiRandom for
                     Random trigger mode.
     """
@@ -2231,7 +2237,7 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
     playback_mode = "1" if one_shot else "0"
     loop_on_val   = "true" if loop_on else "false"
 
-    # Trim: Koala 0.0→1.0 proportion of total frames to skip at the start.
+    # Trim: Koala 0.0->1.0 proportion of total frames to skip at the start.
     # We add trim_frames to start_pt (clamped so start < end).
     # Requires wav_abs_path to read the actual frame count.
     koala_trim = float(pad_data.get("trim", 0.0) or 0.0)
@@ -2242,7 +2248,7 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
                 total_frames = _wf.getnframes()
             trim_frames = int(round(koala_trim * total_frames))
         except Exception:
-            trim_frames = 0   # malformed WAV — silently ignore
+            trim_frames = 0   # malformed WAV - silently ignore
 
     start_pt = int(pad_data.get("start", 0) or 0) + trim_frames
     end_pt   = int(pad_data.get("end",   0) or 0)
@@ -2251,20 +2257,20 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
         start_pt = min(start_pt, end_pt - 1)
 
     # Volume: Koala vol is perceptual (unity=1.0). ALS uses vol^4 as linear amplitude.
-    # koala 0→silence, 1.0→0dB, ~2.0→+24dB
+    # koala 0->silence, 1.0->0dB, ~2.0->+24dB
     _ALS_VOL_MIN = 0.0003162277571  # -70 dB ≈ silence
     koala_vol = float(pad_data.get("vol", 1.0) or 1.0)
     als_vol   = max(_ALS_VOL_MIN, koala_vol ** 4)
 
-    # Pan: Koala 0.0=full left, 0.5=centre, 1.0=full right → ALS -1, 0, +1
+    # Pan: Koala 0.0=full left, 0.5=centre, 1.0=full right -> ALS -1, 0, +1
     koala_pan = float(pad_data.get("pan", 0.5) or 0.5)
     als_pan   = round(koala_pan * 2.0 - 1.0, 10)
 
-    # Pitch: Koala pitch in semitones → ALS TransposeKey in semitones (direct)
+    # Pitch: Koala pitch in semitones -> ALS TransposeKey in semitones (direct)
     koala_pitch = float(pad_data.get("pitch", 0.0) or 0.0)
 
-    # Speed: Koala playback speed (0.5–2.0, default 1.0) → additional semitone offset.
-    # speed = 2^(semitones/12)  →  semitones = 12 * log2(speed)
+    # Speed: Koala playback speed (0.5–2.0, default 1.0) -> additional semitone offset.
+    # speed = 2^(semitones/12)  ->  semitones = 12 * log2(speed)
     # We split into integer semitones (added to TransposeKey) and fractional cents
     # (added to TransposeFine, clamped to ±50 so the two combine cleanly).
     koala_speed = float(pad_data.get("speed", 1.0) or 1.0)
@@ -2277,14 +2283,14 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
 
     als_pitch = int(round(koala_pitch)) + speed_semi_int
 
-    # Tune: Koala fine-tune −1.0→+1.0 maps to ±100 cents → ALS TransposeFine (−50→+50 range)
+    # Tune: Koala fine-tune −1.0->+1.0 maps to ±100 cents -> ALS TransposeFine (−50->+50 range)
     # We combine speed remainder cents with explicit tune cents and clamp to ±50.
     koala_tune = float(pad_data.get("tune", 0.0) or 0.0)
-    tune_cents = koala_tune * 100.0          # Koala ±1.0 → ±100 cents
+    tune_cents = koala_tune * 100.0          # Koala ±1.0 -> ±100 cents
     als_fine   = tune_cents + speed_cents    # combine
     als_fine   = max(-50.0, min(50.0, als_fine))  # ALS TransposeFine range
 
-    # Attack: log-interpolate koala 0.00011→3.0 to ALS 0.1→20000ms
+    # Attack: log-interpolate koala 0.00011->3.0 to ALS 0.1->20000ms
     _ALS_ATK_MIN  = 0.1000000015
     _ALS_ATK_MAX  = 20000.0
     _KOA_ATK_MIN  = 0.00011
@@ -2298,7 +2304,7 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
         _t = (math.log(koala_attack) - math.log(_KOA_ATK_MIN)) /              (math.log(_KOA_ATK_MAX) - math.log(_KOA_ATK_MIN))
         als_attack = _ALS_ATK_MIN * (_ALS_ATK_MAX / _ALS_ATK_MIN) ** _t
 
-    # Release: log-interpolate koala 0.0→3.0 to ALS 1→60000ms
+    # Release: log-interpolate koala 0.0->3.0 to ALS 1->60000ms
     _ALS_REL_MIN  = 1.0
     _ALS_REL_MAX  = 60000.0
     _KOA_REL_MAX  = 3.0
@@ -2311,14 +2317,14 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
         _t = koala_release / _KOA_REL_MAX
         als_release = _ALS_REL_MIN * (_ALS_REL_MAX / _ALS_REL_MIN) ** _t
 
-    # FadeIn / FadeOut: Koala 0.0→1.0 → ALS OneShotEnvelope FadeInTime/FadeOutTime (0→2000 ms).
+    # FadeIn / FadeOut: Koala 0.0->1.0 -> ALS OneShotEnvelope FadeInTime/FadeOutTime (0->2000 ms).
     # Koala uses a linear-feeling slider; we map it linearly to ALS ms range.
     # FadeOut default in template is 0.1 ms (≈0 in UI); when Koala fadeOut==0 we keep
     # the ALS default of 0.1 ms so the existing release envelope governs decay naturally.
     _ALS_FADE_MAX = 2000.0   # ms
     koala_fade_in  = float(pad_data.get("fadeIn",  0.0) or 0.0)
     koala_fade_out = float(pad_data.get("fadeOut", 0.0) or 0.0)
-    als_fade_in    = koala_fade_in  * _ALS_FADE_MAX   # 0→2000 ms
+    als_fade_in    = koala_fade_in  * _ALS_FADE_MAX   # 0->2000 ms
     # Keep Ableton's near-zero default (0.1 ms) when fadeOut is unset in Koala.
     als_fade_out   = koala_fade_out * _ALS_FADE_MAX if koala_fade_out > 0.0 else 0.1000000015
 
@@ -2376,17 +2382,17 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
                  lambda m: f'{m.group(1)}{als_release:.10g}{m.group(2)}',
                  tpl, count=1, flags=re.DOTALL)
 
-    # FadeIn → OneShotEnvelope FadeInTime Manual
+    # FadeIn -> OneShotEnvelope FadeInTime Manual
     tpl = re.sub(r'(<FadeInTime>.*?<Manual Value=")[^"]*(")',
                  lambda m: f'{m.group(1)}{als_fade_in:.10g}{m.group(2)}',
                  tpl, count=1, flags=re.DOTALL)
 
-    # FadeOut → OneShotEnvelope FadeOutTime Manual
+    # FadeOut -> OneShotEnvelope FadeOutTime Manual
     tpl = re.sub(r'(<FadeOutTime>.*?<Manual Value=")[^"]*(")',
                  lambda m: f'{m.group(1)}{als_fade_out:.10g}{m.group(2)}',
                  tpl, count=1, flags=re.DOTALL)
 
-    # Tone → Filter (LP if tone<0, HP if tone>0, off if tone==0)
+    # Tone -> Filter (LP if tone<0, HP if tone>0, off if tone==0)
     # Frequency always 1001.69135 Hz (≈1kHz) when active.
     koala_tone = float(pad_data.get("tone", 0.0) or 0.0)
     if abs(koala_tone) < 1e-6:
@@ -2430,169 +2436,8 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
     )
     remapped, id_start = _als_remap_ids(tpl, id_start)
 
-    # If filter active, inject SimplerFilter into <Slot><Value /></Slot>
-    # Uses id_start counter AFTER remap to guarantee unique IDs throughout file.
-    if als_filter_type is not None:
-        t15 = "\t" * 15; t16 = "\t" * 16; t17 = "\t" * 17
-        t18 = "\t" * 18; t19 = "\t" * 19
-        freq_str = "1001.69135"
 
-        def _uid():
-            nonlocal id_start
-            v = id_start; id_start += 1; return v
-
-        sf = (
-            f"{t16}<SimplerFilter Id=\"0\">\n"
-            f"{t17}<LegacyType>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"5\" /></MidiControllerRange>\n"
-            f"{t17}</LegacyType>\n"
-            f"{t17}<Type>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"{als_filter_type}\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
-            f"{t17}</Type>\n"
-            f"{t17}<CircuitLpHp>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
-            f"{t17}</CircuitLpHp>\n"
-            f"{t17}<CircuitBpNoMo>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t17}</CircuitBpNoMo>\n"
-            f"{t17}<Slope>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"true\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
-            f"{t17}</Slope>\n"
-            f"{t17}<Freq>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"{freq_str}\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"30\" /><Max Value=\"22000\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</Freq>\n"
-            f"{t17}<LegacyQ>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0.6999999881\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0.3000000119\" /><Max Value=\"10\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</LegacyQ>\n"
-            f"{t17}<Res>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1.25\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</Res>\n"
-            f"{t17}<X>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</X>\n"
-            f"{t17}<Drive>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"24\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</Drive>\n"
-            f"{t17}<Envelope>\n"
-            f"{t18}<AttackTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0.1000000015\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0.1000000015\" /><Max Value=\"20000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</AttackTime>\n"
-            f"{t18}<AttackLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</AttackLevel>\n"
-            f"{t18}<AttackSlope>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-1\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</AttackSlope>\n"
-            f"{t18}<DecayTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"600\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"1\" /><Max Value=\"60000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</DecayTime>\n"
-            f"{t18}<DecayLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"1\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</DecayLevel>\n"
-            f"{t18}<DecaySlope>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"1\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-1\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</DecaySlope>\n"
-            f"{t18}<SustainLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</SustainLevel>\n"
-            f"{t18}<ReleaseTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"50\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"1\" /><Max Value=\"60000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</ReleaseTime>\n"
-            f"{t18}<ReleaseLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</ReleaseLevel>\n"
-            f"{t18}<ReleaseSlope>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"1\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-1\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</ReleaseSlope>\n"
-            f"{t18}<LoopMode>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
-            f"{t18}</LoopMode>\n"
-            f"{t18}<LoopTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"100\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0.200000003\" /><Max Value=\"20000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</LoopTime>\n"
-            f"{t18}<RepeatTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"3\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"14\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</RepeatTime>\n"
-            f"{t18}<TimeVelScale>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-100\" /><Max Value=\"100\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</TimeVelScale>\n"
-            f"{t18}<CurrentOverlay Value=\"0\" />\n"
-            f"{t18}<IsOn>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"false\" />\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
-            f"{t18}</IsOn>\n"
-            f"{t18}<Amount>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-72\" /><Max Value=\"72\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</Amount>\n"
-            f"{t18}<ScrollPosition Value=\"0\" />\n"
-            f"{t17}</Envelope>\n"
-            f"{t17}<ModByPitch>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"1\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</ModByPitch>\n"
-            f"{t17}<ModByVelocity>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</ModByVelocity>\n"
-            f"{t17}<ModByLfo>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"24\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</ModByLfo>\n"
-            f"{t16}</SimplerFilter>\n"
-        )
-        remapped = re.sub(
-            r'(<Filter>.*?<Slot>\s*)<Value />',
-            lambda m: m.group(1) + f'<Value>\n{sf}{t15}</Value>',
-            remapped, count=1, flags=re.DOTALL)
-
-    # ── Chopper mode: Slice Simpler + SendingNote=35 + optional MidiRandom ─
+    # -- Chopper mode: Slice Simpler + SendingNote=35 + optional MidiRandom -
     if chopper_params:
         N = chopper_params['slice_count']
         is_auto = chopper_params.get('slice_mode', 1.0) == 0.0
@@ -2664,7 +2509,7 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
             chain_idx   = koala_bus + 1   # R1..R4
             target_enum = koala_bus + 1
             track_num   = midi_track_id
-            # We use a placeholder for drum_device_id — patched after remap
+            # We use a placeholder for drum_device_id - patched after remap
             target_str  = f'AudioOut/Track.{track_num}/DeviceIn.__DRUMDEVID__.R{chain_idx},ChainIn'
             upper_str   = f'__GROUPNAME__'
             lower_str   = f'__GROUPNAME__ | {_BUS_RETURN_CHAIN_LETTERS[koala_bus]} Return Chain | Chain In'
@@ -2774,7 +2619,7 @@ def _make_drum_rack_device_chain(adg_pads, group_index, id_start,
     return remapped, id_start
 
 
-# Koala EQ type → Ableton EQ Eight Mode
+# Koala EQ type -> Ableton EQ Eight Mode
 _KOALA_EQ_TYPE_TO_EQ8_MODE = {
     'lowshelf':  '1',
     'peaking':   '2',
@@ -2784,7 +2629,7 @@ _KOALA_EQ_TYPE_TO_EQ8_MODE = {
 def _eq8_device_xml(eq_data, id_start, tab_level=13):
     """Build an Ableton EQ Eight device XML block from Koala EQ parameters.
 
-    eq_data: dict with keys 'lo', 'mid', 'hi' — each containing
+    eq_data: dict with keys 'lo', 'mid', 'hi' - each containing
              freq (Hz), gain (dB), q, type (lowshelf/peaking/highshelf)
     Maps onto EQ8 bands 0/1/2 (lo/mid/hi). Bands 3-7 are inactive defaults.
     Tab level 13 for drum branch, 7 for standalone Simpler track.
@@ -2893,9 +2738,9 @@ def _eq8_device_xml(eq_data, id_start, tab_level=13):
         )
 
     # Map the 3 Koala bands to EQ8 positions matching Ableton layout.
-    # lo  → Band 0, Mode=2 (Bell at low freq)
-    # mid → Band 2, Mode=3 (Bell/Peak)
-    # hi  → Band 3, Mode=5 (High Cut)
+    # lo  -> Band 0, Mode=2 (Bell at low freq)
+    # mid -> Band 2, Mode=3 (Bell/Peak)
+    # hi  -> Band 3, Mode=5 (High Cut)
     # This matches the reference mod file structure.
     lo_bd  = eq_data.get('lo',  {})
     mid_bd = eq_data.get('mid', {})
@@ -3255,7 +3100,7 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
     For normal pads applies: vol, pan, pitch, tune, speed, attack, release,
       tone, start, end, looping, oneshot, stretching, fadeIn, fadeOut, trim.
 
-    chopper_params: dict from _get_chopper_params() — when set, switches the
+    chopper_params: dict from _get_chopper_params() - when set, switches the
       Simpler to Slice/Region mode and sets chopper-specific parameters.
       MidiRandom device is injected for Random trigger mode.
 
@@ -3266,13 +3111,19 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
     last_close = tpl.rfind('</DeviceChain>')
     tpl = tpl[:last_close].rstrip()
 
-    # ── Chopper vs normal pad parameter extraction ────────────────────────
+    # Strip SimplerFilter from the filter slot - class deprecated in Live 12.3.7+
+    tpl = re.sub(
+        r'<Value>\s*<SimplerFilter\b.*?</SimplerFilter>\s*</Value>',
+        '<Value />',
+        tpl, count=1, flags=re.DOTALL)
+
+    # -- Chopper vs normal pad parameter extraction ------------------------
     _ALS_VOL_MIN = 0.0003162277571
 
     if chopper_params:
         # Chopper pads: playback params come from synthParams.padParams.
         # start/end/loop/oneshot/stretch/attack/release/fade/tone stay at
-        # template defaults — Simpler slice mode handles playback.
+        # template defaults - Simpler slice mode handles playback.
         start_pt      = 0
         end_pt        = 0
         loop_on       = False
@@ -3293,7 +3144,7 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
         als_fade_out = 0.1000000015
         als_filter_type = None
     else:
-        # ── Sample region / playback ─────────────────────────────────────
+        # -- Sample region / playback -------------------------------------
         koala_trim  = float(pad_data.get("trim", 0.0) or 0.0)
         trim_frames = 0
         if koala_trim > 0.0 and wav_abs_path and os.path.isfile(wav_abs_path):
@@ -3315,15 +3166,15 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
         loop_on_val  = "true" if loop_on else "false"
         playback_mode = "1" if one_shot else "0"
 
-        # ── Volume ───────────────────────────────────────────────────────
+        # -- Volume -------------------------------------------------------
         koala_vol = float(pad_data.get("vol", 1.0) or 1.0)
         als_vol   = max(_ALS_VOL_MIN, koala_vol ** 4)
 
-        # ── Pan ──────────────────────────────────────────────────────────
+        # -- Pan ----------------------------------------------------------
         koala_pan = float(pad_data.get("pan", 0.5) or 0.5)
         als_pan   = round(koala_pan * 2.0 - 1.0, 10)
 
-        # ── Pitch + Speed + Tune ─────────────────────────────────────────
+        # -- Pitch + Speed + Tune -----------------------------------------
         koala_pitch = float(pad_data.get("pitch", 0.0) or 0.0)
         koala_speed = float(pad_data.get("speed", 1.0) or 1.0)
         if abs(koala_speed - 1.0) < 1e-6:
@@ -3337,7 +3188,7 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
         tune_cents     = koala_tune * 100.0
         als_fine       = max(-50.0, min(50.0, tune_cents + speed_cents))
 
-        # ── Attack ───────────────────────────────────────────────────────
+        # -- Attack -------------------------------------------------------
         _ALS_ATK_MIN = 0.1000000015
         _ALS_ATK_MAX = 20000.0
         _KOA_ATK_MIN = 0.00011
@@ -3352,7 +3203,7 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
                  (math.log(_KOA_ATK_MAX) - math.log(_KOA_ATK_MIN))
             als_attack = _ALS_ATK_MIN * (_ALS_ATK_MAX / _ALS_ATK_MIN) ** _t
 
-        # ── Release ──────────────────────────────────────────────────────
+        # -- Release ------------------------------------------------------
         _ALS_REL_MIN = 1.0
         _ALS_REL_MAX = 60000.0
         _KOA_REL_MAX = 3.0
@@ -3365,14 +3216,14 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
             _t = koala_release / _KOA_REL_MAX
             als_release = _ALS_REL_MIN * (_ALS_REL_MAX / _ALS_REL_MIN) ** _t
 
-        # ── FadeIn / FadeOut ─────────────────────────────────────────────
+        # -- FadeIn / FadeOut ---------------------------------------------
         _ALS_FADE_MAX = 2000.0
         koala_fade_in  = float(pad_data.get("fadeIn",  0.0) or 0.0)
         koala_fade_out = float(pad_data.get("fadeOut", 0.0) or 0.0)
         als_fade_in    = koala_fade_in  * _ALS_FADE_MAX
         als_fade_out   = koala_fade_out * _ALS_FADE_MAX if koala_fade_out > 0.0 else 0.1000000015
 
-        # ── Tone → Filter ─────────────────────────────────────────────────
+        # -- Tone -> Filter -------------------------------------------------
         koala_tone = float(pad_data.get("tone", 0.0) or 0.0)
         if abs(koala_tone) < 1e-6:
             als_filter_type = None
@@ -3381,7 +3232,7 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
         else:
             als_filter_type = "1"   # High Pass
 
-    # ── Patch template ────────────────────────────────────────────────────
+    # -- Patch template ----------------------------------------------------
     tpl = re.sub(r'<UserName Value="[^"]*"',
                  f'<UserName Value="{pad_label_str}"', tpl, count=1)
     tpl = re.sub(r'<Name Value="[^"]*"',
@@ -3397,15 +3248,15 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
                  tpl, count=1, flags=re.DOTALL)
     tpl = re.sub(r'<IsWarped Value="[^"]*"',
                  f'<IsWarped Value="{is_warped}"', tpl, count=1)
-    # ── Globals PlaybackMode: chopper=2 (Slice), normal=0/1 (Classic/OneShot)
+    # -- Globals PlaybackMode: chopper=2 (Slice), normal=0/1 (Classic/OneShot)
     globals_pm = "2" if chopper_params else playback_mode
     tpl = re.sub(r'<PlaybackMode Value="[^"]*"',
                  f'<PlaybackMode Value="{globals_pm}"', tpl, count=1)
-    # ── ReleaseLoop Mode
+    # -- ReleaseLoop Mode
     tpl = re.sub(r'(<ReleaseLoop>.*?<Mode Value=")[^"]*(")',
                  lambda m: f'{m.group(1)}{loop_mode}{m.group(2)}',
                  tpl, count=1, flags=re.DOTALL)
-    # ── Chopper-specific: SlicingStyle, SlicingRegions, NumVoices, SimplerSlicing
+    # -- Chopper-specific: SlicingStyle, SlicingRegions, NumVoices, SimplerSlicing
     if chopper_params:
         N = chopper_params['slice_count']
         is_auto = chopper_params.get('slice_mode', 1.0) == 0.0
@@ -3494,174 +3345,14 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
     )
     remapped, id_start = _als_remap_ids(tpl, id_start)
 
-    # Inject SimplerFilter if tone is active (same logic as drum branch)
-    if als_filter_type is not None:
-        t15 = "\t" * 15; t16 = "\t" * 16; t17 = "\t" * 17
-        t18 = "\t" * 18; t19 = "\t" * 19
-        freq_str = "1001.69135"
 
-        def _uid():
-            nonlocal id_start
-            v = id_start; id_start += 1; return v
-
-        sf = (
-            f"{t16}<SimplerFilter Id=\"0\">\n"
-            f"{t17}<LegacyType>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"5\" /></MidiControllerRange>\n"
-            f"{t17}</LegacyType>\n"
-            f"{t17}<Type>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"{als_filter_type}\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
-            f"{t17}</Type>\n"
-            f"{t17}<CircuitLpHp>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
-            f"{t17}</CircuitLpHp>\n"
-            f"{t17}<CircuitBpNoMo>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t17}</CircuitBpNoMo>\n"
-            f"{t17}<Slope>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"true\" />\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
-            f"{t17}</Slope>\n"
-            f"{t17}<Freq>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"{freq_str}\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"30\" /><Max Value=\"22000\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</Freq>\n"
-            f"{t17}<LegacyQ>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0.6999999881\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0.3000000119\" /><Max Value=\"10\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</LegacyQ>\n"
-            f"{t17}<Res>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1.25\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</Res>\n"
-            f"{t17}<X>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</X>\n"
-            f"{t17}<Drive>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"24\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</Drive>\n"
-            f"{t17}<Envelope>\n"
-            f"{t18}<AttackTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0.1000000015\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0.1000000015\" /><Max Value=\"20000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</AttackTime>\n"
-            f"{t18}<AttackLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</AttackLevel>\n"
-            f"{t18}<AttackSlope>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-1\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</AttackSlope>\n"
-            f"{t18}<DecayTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"600\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"1\" /><Max Value=\"60000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</DecayTime>\n"
-            f"{t18}<DecayLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"1\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</DecayLevel>\n"
-            f"{t18}<DecaySlope>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"1\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-1\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</DecaySlope>\n"
-            f"{t18}<SustainLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</SustainLevel>\n"
-            f"{t18}<ReleaseTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"50\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"1\" /><Max Value=\"60000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</ReleaseTime>\n"
-            f"{t18}<ReleaseLevel>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</ReleaseLevel>\n"
-            f"{t18}<ReleaseSlope>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"1\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-1\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</ReleaseSlope>\n"
-            f"{t18}<LoopMode>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
-            f"{t18}</LoopMode>\n"
-            f"{t18}<LoopTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"100\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0.200000003\" /><Max Value=\"20000\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</LoopTime>\n"
-            f"{t18}<RepeatTime>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"3\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"14\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</RepeatTime>\n"
-            f"{t18}<TimeVelScale>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-100\" /><Max Value=\"100\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</TimeVelScale>\n"
-            f"{t18}<CurrentOverlay Value=\"0\" />\n"
-            f"{t18}<IsOn>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"false\" />\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
-            f"{t18}</IsOn>\n"
-            f"{t18}<Amount>\n{t19}<LomId Value=\"0\" />\n{t19}<Manual Value=\"0\" />\n"
-            f"{t19}<MidiControllerRange><Min Value=\"-72\" /><Max Value=\"72\" /></MidiControllerRange>\n"
-            f"{t19}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t19}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t18}</Amount>\n"
-            f"{t18}<ScrollPosition Value=\"0\" />\n"
-            f"{t17}</Envelope>\n"
-            f"{t17}<ModByPitch>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"1\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</ModByPitch>\n"
-            f"{t17}<ModByVelocity>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</ModByVelocity>\n"
-            f"{t17}<ModByLfo>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
-            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"24\" /></MidiControllerRange>\n"
-            f"{t18}<AutomationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
-            f"{t18}<ModulationTarget Id=\"{_uid()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
-            f"{t17}</ModByLfo>\n"
-            f"{t16}</SimplerFilter>\n"
-        )
-        remapped = re.sub(
-            r'(<Filter>.*?<Slot>\s*)<Value />',
-            lambda m: m.group(1) + f'<Value>\n{sf}{t15}</Value>',
-            remapped, count=1, flags=re.DOTALL)
-
-    # ── Inject MidiRandom for Random trigger mode ────────────────────────
+    # -- Inject MidiRandom for Random trigger mode ------------------------
     if chopper_params and chopper_params['trigger_mode'] == 2.0:
         mr_xml, id_start = _midi_random_device_xml(chopper_params['slice_count'], id_start)
         # Insert MidiRandom before OriginalSimpler inside <Devices>
         remapped = remapped.replace('<Devices>\n', '<Devices>\n' + mr_xml, 1)
 
-    # ── Inject EQ Eight after Simpler if pad EQ is enabled ───────────────
+    # -- Inject EQ Eight after Simpler if pad EQ is enabled ---------------
     eq_data = (chopper_params.get('eq', {}) if chopper_params
                else pad_data.get('eq', {}))
     if eq_data and str(eq_data.get('enabled', 'false')).lower() == 'true':
@@ -3680,7 +3371,7 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
 
 # Koala bus index -> (ReturnBranch letter, ReturnTrack name, ReturnTrack offset)
 # The offset is the position (0-3) within the 4 added ReturnTracks.
-# Bus 2 and 3 are swapped in Ableton's internal chain ordering — this matches
+# Bus 2 and 3 are swapped in Ableton's internal chain ordering - this matches
 # the working reference file exactly.
 #   bus 0 -> a Return Chain -> A-Bus (ReturnTrack offset 0)
 #   bus 1 -> b Return Chain -> B-Bus (ReturnTrack offset 1)
@@ -3714,7 +3405,7 @@ def _bus_return_track_xml(track_id, bus_index, id_start, n_scenes, sc_params=Non
     # 2. Set the track name
     tpl = re.sub(r'<EffectiveName Value="[^"]*"',
                  f'<EffectiveName Value="{name}"', tpl, count=1)
-    # UserName — keep as "Bus" to match reference
+    # UserName - keep as "Bus" to match reference
     tpl = re.sub(r'<UserName Value="[^"]*"',
                  f'<UserName Value="Bus"', tpl, count=1)
 
@@ -4056,7 +3747,7 @@ def _bus_return_branches_xml(group_name, midi_track_id, drum_device_id, rt_ids, 
     Returns (xml_string, new_id_counter)
     """
     # ReturnBranch ordering: a->rt_ids[0], b->rt_ids[1], c->rt_ids[2], d->rt_ids[3]
-    # Clean 1:1 mapping — a=A-Bus, b=B-Bus, c=C-Bus, d=D-Bus
+    # Clean 1:1 mapping - a=A-Bus, b=B-Bus, c=C-Bus, d=D-Bus
     rt_order = [rt_ids[0], rt_ids[1], rt_ids[2], rt_ids[3]]
     rt_names_order = [_BUS_RETURN_TRACK_NAMES[0], _BUS_RETURN_TRACK_NAMES[1],
                       _BUS_RETURN_TRACK_NAMES[2], _BUS_RETURN_TRACK_NAMES[3]]
@@ -4081,7 +3772,7 @@ def _bus_return_branches_xml(group_name, midi_track_id, drum_device_id, rt_ids, 
         pan_id = _uid()
         pan_mid= _uid()
         # SendInfos for the return branch itself (one send back to the existing
-        # blank-template return tracks — kept at minimum, same as reference)
+        # blank-template return tracks - kept at minimum, same as reference)
         si_ids = [(_uid(), _uid()) for _ in range(4)]
 
         si_xml = ''
@@ -4522,7 +4213,7 @@ def build_als(bpm, drum_tracks, simpler_tracks,
 
         # Replace SendsPre: project-level list of pre/post send states, one per ReturnTrack.
         # Blank has 2 entries (Id=0, Id=1). Bus mode needs 4 entries with IDs 4,5,6,7
-        # (matching the TrackSendHolder IDs used in the MidiTrack — same numbering scheme).
+        # (matching the TrackSendHolder IDs used in the MidiTrack - same numbering scheme).
         new_sends_pre = (
             '<SendsPre>\n'
             '\t\t\t<SendPreBool Id="4" Value="false" />\n'
@@ -4581,20 +4272,20 @@ def main():
     for koala_file in input_files:
         koala_file = koala_file.strip("'\"")
         if not os.path.isfile(koala_file):
-            print(f"⚠️  File not found: {koala_file}")
+            print(f"WARNING:  File not found: {koala_file}")
             continue
 
-        print(f"\n📂 Processing: {koala_file}")
+        print(f"\n>> Processing: {koala_file}")
 
         with zipfile.ZipFile(koala_file, 'r') as z:
             names = z.namelist()
             sampler_names = [n for n in names if n.lower().endswith("sampler.json")]
             if not sampler_names:
-                print("   ⚠️  No sampler.json found"); continue
+                print("   WARNING:  No sampler.json found"); continue
             with z.open(sampler_names[0]) as f:
                 sampler_data = json.load(f)
             if "sequence.json" not in names:
-                print("   ⚠️  No sequence.json found"); continue
+                print("   WARNING:  No sequence.json found"); continue
             with z.open("sequence.json") as f:
                 seq_data = json.load(f)
             song_data = None
@@ -4630,7 +4321,19 @@ def main():
         out_dir     = os.path.join(koala_dir, f"{project_name} Project")
         samples_dir = os.path.join(out_dir, "Samples", "Imported")
         rev_dir     = os.path.join(out_dir, "Samples", "Processed", "Reverse")
-        os.makedirs(samples_dir, exist_ok=True)
+        try:
+            os.makedirs(samples_dir, exist_ok=True)
+        except OSError as e:
+            # Output directory may be read-only (e.g. USB drive, ZIP, network path).
+            # Fall back to a writable temp directory beside the script.
+            import tempfile
+            fallback_base = os.path.join(tempfile.gettempdir(), f"{project_name} Project")
+            print(f"   WARNING: Cannot write to {out_dir}: {e}")
+            print(f"   Falling back to: {fallback_base}")
+            out_dir     = fallback_base
+            samples_dir = os.path.join(out_dir, "Samples", "Imported")
+            rev_dir     = os.path.join(out_dir, "Samples", "Processed", "Reverse")
+            os.makedirs(samples_dir, exist_ok=True)
 
         # Create Ableton Project Info folder and .cfg file
         proj_info_dir = os.path.join(out_dir, "Ableton Project Info")
@@ -4678,7 +4381,7 @@ def main():
             for sample_id in sorted(all_ids):
                 candidate = f"sampler/{sample_id}.wav"
                 if candidate not in z.namelist():
-                    print(f"   ⚠️  sampler/{sample_id}.wav not found"); continue
+                    print(f"   WARNING:  sampler/{sample_id}.wav not found"); continue
                 ref_pad    = next((p for p in pads if int(p.get("sampleId", -1)) == sample_id), {})
                 base_fname = sample_filename(sample_id, ref_pad) + ".wav"
                 if base_fname in used_fnames and used_fnames[base_fname] != sample_id:
@@ -4691,9 +4394,9 @@ def main():
                 if not os.path.exists(dest):
                     z.extract(candidate, samples_dir)
                     shutil.move(os.path.join(samples_dir, f"sampler/{sample_id}.wav"), dest)
-                    print(f"   ✓ Extracted: {fname}")
+                    print(f"   OK Extracted: {fname}")
                 else:
-                    print(f"   ✓ Reused:    {fname}")
+                    print(f"   OK Reused:    {fname}")
                 extracted_wavs[sample_id] = dest
 
         stray = os.path.join(samples_dir, "sampler")
@@ -4713,11 +4416,11 @@ def main():
                 rev_dest = os.path.join(rev_dir, rev_name)
                 if not os.path.exists(rev_dest):
                     reverse_wav(src_wav, rev_dest)
-                    print(f"   ✓ Reversed:  {rev_name}")
+                    print(f"   OK Reversed:  {rev_name}")
                 reversed_wavs[sample_id] = rev_dest
 
-        # ── Step 1: Build drum rack tracks ────────────────────────────────────
-        print(f"\n── Step 1: Building drum rack tracks")
+        # -- Step 1: Build drum rack tracks ------------------------------------
+        print(f"\n-- Step 1: Building drum rack tracks")
         group_pads = [[] for _ in GROUPS]
         for pad in pads:
             try:
@@ -4733,7 +4436,7 @@ def main():
         for i, group_name in enumerate(GROUPS):
             pads_in_group = group_pads[i]
             if not pads_in_group:
-                print(f"   {group_name}: no pads → skipped"); continue
+                print(f"   {group_name}: no pads -> skipped"); continue
             print(f"   {group_name}: {len(pads_in_group)} pads")
             adg_pads = []
             for pad_num, pad_data, sample_id in pads_in_group:
@@ -4766,11 +4469,11 @@ def main():
                 if group_has_notes:
                     break
             if group_has_notes:
-                print(f"   {group_name}: no pads but has sequence notes → adding empty drum rack")
+                print(f"   {group_name}: no pads but has sequence notes -> adding empty drum rack")
                 drum_tracks.append((group_name, i, []))
 
-        # ── Step 1b: Build Simpler tracks for note-mode pads ──────────────────
-        print(f"\n── Step 1b: Building Simpler tracks for note-mode pads")
+        # -- Step 1b: Build Simpler tracks for note-mode pads ------------------
+        print(f"\n-- Step 1b: Building Simpler tracks for note-mode pads")
         # Collect chopper pad numbers so we exclude them from note-mode detection
         _chopper_nums_temp = {int(p.get("pad")) for p in pads
                               if _is_chopper_pad(p) and p.get("pad") is not None}
@@ -4799,14 +4502,14 @@ def main():
                 wav_abs  = extracted_wavs[sample_id]
                 rel_path = f"Samples/Imported/{os.path.basename(wav_abs)}"
             else:
-                print(f"   ⚠️  Pad {pad_num}: no sample found, skipping"); continue
+                print(f"   WARNING:  Pad {pad_num}: no sample found, skipping"); continue
             label_str    = pad_label(pad_num)
             display_name = os.path.splitext(os.path.basename(wav_abs))[0]
             simpler_tracks.append((label_str, rel_path, pad_data_n, display_name, wav_abs, None))
-            print(f"   → Pad {label_str}  ({display_name})")
+            print(f"   -> Pad {label_str}  ({display_name})")
 
-        # ── Step 1c: Build Simpler tracks for chopper pads ──────────────────
-        print(f"\n── Step 1c: Building Simpler tracks for chopper pads")
+        # -- Step 1c: Build Simpler tracks for chopper pads ------------------
+        print(f"\n-- Step 1c: Building Simpler tracks for chopper pads")
         chopper_pad_info = {}  # pad_num -> chopper_params
         for pad in pads:
             if not _is_chopper_pad(pad):
@@ -4817,7 +4520,7 @@ def main():
             except:
                 continue
             if sample_id not in extracted_wavs:
-                print(f"   ⚠️  Chopper pad {pad_num}: no sample, skipping")
+                print(f"   WARNING:  Chopper pad {pad_num}: no sample, skipping")
                 continue
             cp       = _get_chopper_params(pad)
             wav_abs  = extracted_wavs[sample_id]
@@ -4829,10 +4532,10 @@ def main():
             # Random is handled entirely in the drum rack (MidiRandom in branch)
             # so no separate Simpler track is needed for it.
             if cp['trigger_mode'] == 2.0:
-                print(f"   → Pad {label_str} [Chopper/Random, {cp['slice_count']} slices]  (drum rack only)")
+                print(f"   -> Pad {label_str} [Chopper/Random, {cp['slice_count']} slices]  (drum rack only)")
                 continue
             simpler_tracks.append((label_str, rel_path, pad, display_name, wav_abs, cp))
-            print(f"   → Pad {label_str} [Chopper/{trigger_name}, {cp['slice_count']} slices]  ({display_name})")
+            print(f"   -> Pad {label_str} [Chopper/{trigger_name}, {cp['slice_count']} slices]  ({display_name})")
         if not chopper_pad_info:
             print("   (no chopper pads)")
 
@@ -4840,8 +4543,8 @@ def main():
         # regardless of whether they were added in step 1b or 1c.
         simpler_tracks.sort(key=lambda t: pad_num_from_label(t[0]))
 
-        # ── Step 2: Parse sequences into MIDI clips ──────────────────────────
-        print(f"\n── Step 2: Parsing MIDI sequences")
+        # -- Step 2: Parse sequences into MIDI clips --------------------------
+        print(f"\n-- Step 2: Parsing MIDI sequences")
         sequences = seq_data.get("sequences", [])
         print(f"   {len(sequences)} sequence(s), {len([s for s in sequences if s.get('noteSequence',{}).get('pattern',{}).get('notes')])} non-empty")
 
@@ -4856,8 +4559,8 @@ def main():
         total_clips = sum(len(v) for v in drum_clips.values()) + sum(len(v) for v in simpler_clips.values())
         print(f"   {total_clips} clip(s) generated")
 
-        # ── Step 3: Build and write ALS ───────────────────────────────────────
-        print(f"\n── Step 3: Building Ableton project")
+        # -- Step 3: Build and write ALS ---------------------------------------
+        print(f"\n-- Step 3: Building Ableton project")
         # n_scenes = index of last non-empty sequence (min 8, max 32)
         # Only create as many scenes as the project actually uses
         sequences_raw = seq_data.get("sequences", [])
@@ -4930,7 +4633,7 @@ def main():
                 if vol != 0.0 or mute:
                     bus_mixer_map[bus_idx] = {"volume": vol, "mute": mute}
                 if solo:
-                    print(f"   ⚠️  Bus {'ABCD'[bus_idx]} is soloed in Koala — no ALS equivalent, skipping")
+                    print(f"   WARNING:  Bus {'ABCD'[bus_idx]} is soloed in Koala - no ALS equivalent, skipping")
 
         # --no-busses flag: clear all bus-related data so build_als treats
         # this as a plain project regardless of what the koala file contains.
@@ -4952,9 +4655,9 @@ def main():
         _als_save(als_path, als_xml)
         n_drum    = len(drum_tracks)
         n_simpler = len(simpler_tracks)
-        print(f"   → {project_name}.als  ({n_drum} drum rack{'s' if n_drum!=1 else ''}, {n_simpler} Simpler track{'s' if n_simpler!=1 else ''}, {bpm} BPM)")
+        print(f"   -> {project_name}.als  ({n_drum} drum rack{'s' if n_drum!=1 else ''}, {n_simpler} Simpler track{'s' if n_simpler!=1 else ''}, {bpm} BPM)")
 
-        print(f"\n✅ Done!")
+        print(f"\n>> Done!")
         print(f"   Output:  {out_dir}")
         print(f"   Samples: {samples_dir}\n")
 
