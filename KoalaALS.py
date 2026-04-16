@@ -2436,6 +2436,61 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
     )
     remapped, id_start = _als_remap_ids(tpl, id_start)
 
+    # If filter active, inject SimplerFilter into drum branch filter slot.
+    # NOTE: SimplerFilter works in drum rack branches. It crashes in standalone
+    # Simpler tracks (Live 12.3.7 issue) - those use an empty slot instead.
+    if als_filter_type is not None:
+        t15 = "\t" * 15; t16 = "\t" * 16; t17 = "\t" * 17
+        t18 = "\t" * 18
+        freq_str = "1001.69135"
+
+        def _uid_sf():
+            nonlocal id_start
+            v = id_start; id_start += 1; return v
+
+        sf = (
+            f"{t16}<SimplerFilter Id=\"0\">\n"
+            f"{t17}<LegacyType>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"5\" /></MidiControllerRange>\n"
+            f"{t17}</LegacyType>\n"
+            f"{t17}<Type>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"{als_filter_type}\" />\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
+            f"{t17}</Type>\n"
+            f"{t17}<CircuitLpHp>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"4\" /></MidiControllerRange>\n"
+            f"{t17}</CircuitLpHp>\n"
+            f"{t17}<CircuitBpNoMo>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1\" /></MidiControllerRange>\n"
+            f"{t17}</CircuitBpNoMo>\n"
+            f"{t17}<Slope>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"true\" />\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<MidiCCOnOffThresholds><Min Value=\"64\" /><Max Value=\"127\" /></MidiCCOnOffThresholds>\n"
+            f"{t17}</Slope>\n"
+            f"{t17}<Freq>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"{freq_str}\" />\n"
+            f"{t18}<MidiControllerRange><Min Value=\"30\" /><Max Value=\"22000\" /></MidiControllerRange>\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<ModulationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
+            f"{t17}</Freq>\n"
+            f"{t17}<LegacyQ>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0.6999999881\" />\n"
+            f"{t18}<MidiControllerRange><Min Value=\"0.3000000119\" /><Max Value=\"10\" /></MidiControllerRange>\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<ModulationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
+            f"{t17}</LegacyQ>\n"
+            f"{t17}<Res>\n{t18}<LomId Value=\"0\" />\n{t18}<Manual Value=\"0\" />\n"
+            f"{t18}<MidiControllerRange><Min Value=\"0\" /><Max Value=\"1.25\" /></MidiControllerRange>\n"
+            f"{t18}<AutomationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></AutomationTarget>\n"
+            f"{t18}<ModulationTarget Id=\"{_uid_sf()}\"><LockEnvelope Value=\"0\" /></ModulationTarget>\n"
+            f"{t17}</Res>\n"
+            f"{t16}</SimplerFilter>\n"
+        )
+        remapped = re.sub(
+            r'(<Filter>.*?<Slot>\s*)<Value />',
+            lambda m: m.group(1) + f'<Value>\n{sf}{t15}</Value>',
+            remapped, count=1, flags=re.DOTALL)
 
     # -- Chopper mode: Slice Simpler + SendingNote=35 + optional MidiRandom -
     if chopper_params:

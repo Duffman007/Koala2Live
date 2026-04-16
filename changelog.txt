@@ -1,3 +1,5 @@
+V0.72 - Tone Bug fixed in pad mode (remains disabled in note mode)
+v0.71 - Tone disabled due to bug
 v0.70 - Chopper Support Added
         - Velocity linked to midi clip
         - Random linked to Random Midi Device
