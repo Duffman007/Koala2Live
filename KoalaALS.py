@@ -1483,10 +1483,11 @@ def build_sequence_clips(seq_data, keyboard_mode, selected_pad, note_mode_pad_nu
 
         # Partition notes: chopper pads handled separately
         chopper_pads_here = {n["num"] for n in notes if n["num"] in chopper_pad_info}
+        # A pad is note-mode in THIS sequence only if it has at least one
+        # non-zero pitch note here. selected_pad is NOT unconditionally added —
+        # if it only has pitch=0 notes in this sequence it's a drum trigger.
         note_mode_pads = {n["num"] for n in notes
                           if n.get("pitch", 0.0) != 0.0 and n["num"] not in chopper_pads_here}
-        if keyboard_mode and selected_pad >= 0:
-            note_mode_pads.add(selected_pad)
 
         normal_notes   = [n for n in notes if n["num"] not in note_mode_pads
                           and n["num"] not in chopper_pads_here]
@@ -2442,7 +2443,9 @@ def _make_drum_branch(rel_path, pad_data, display_name, receiving_note, id_start
     if als_filter_type is not None:
         t15 = "\t" * 15; t16 = "\t" * 16; t17 = "\t" * 17
         t18 = "\t" * 18
-        freq_str = "1001.69135"
+        # freq = |tone| * 1000 Hz, clamped to [30, 1000]
+        # Normalise: Koala LP max=-0.99, HP max=+0.30, both -> 1000Hz
+        freq_str = f"{min(1000.0, max(30.0, (abs(koala_tone) / (0.99 if koala_tone < 0 else 0.30)) * 1000.0)):.6g}"
 
         def _uid_sf():
             nonlocal id_start
@@ -3166,12 +3169,6 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
     last_close = tpl.rfind('</DeviceChain>')
     tpl = tpl[:last_close].rstrip()
 
-    # Strip SimplerFilter from the filter slot - class deprecated in Live 12.3.7+
-    tpl = re.sub(
-        r'<Value>\s*<SimplerFilter\b.*?</SimplerFilter>\s*</Value>',
-        '<Value />',
-        tpl, count=1, flags=re.DOTALL)
-
     # -- Chopper vs normal pad parameter extraction ------------------------
     _ALS_VOL_MIN = 0.0003162277571
 
@@ -3386,6 +3383,16 @@ def _make_simpler_device_chain(rel_path, pad_data, display_name, pad_label_str, 
         r'(<Filter>.*?<IsOn>.*?<Manual Value=")[^"]*(")',
         lambda m: f'{m.group(1)}{als_filter_on}{m.group(2)}',
         tpl, count=1, flags=re.DOTALL)
+    # Patch SimplerFilter Type in template: 0=LP, 1=HP
+    if als_filter_type is not None:
+        tpl = re.sub(
+            r'(<Filter>.*?<SimplerFilter\b.*?<Type>.*?<Manual Value=")[^"]*(")',
+            lambda m: f'{m.group(1)}{als_filter_type}{m.group(2)}',
+            tpl, count=1, flags=re.DOTALL)
+        tpl = re.sub(
+            r'(<Filter>.*?<SimplerFilter\b.*?<Freq>.*?<Manual Value=")[^"]*(")',
+            lambda m: f'{m.group(1)}{min(1000.0, max(30.0, (abs(koala_tone) / (0.99 if koala_tone < 0 else 0.30)) * 1000.0)):.6g}{m.group(2)}',
+            tpl, count=1, flags=re.DOTALL)
 
     # Clear WarpMarkers to a clean single-origin marker.
     # The template has hardcoded markers from the reference sample that would
